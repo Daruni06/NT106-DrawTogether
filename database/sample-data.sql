@@ -1,0 +1,3 @@
+-- Du lieu mau de test nhanh luc demo.
+-- Co the them user mau, room mau va lich su net ve mau.
+-- Khong dua mat khau that vao file nay.

@@ -1,0 +1,2 @@
+<!-- Project drawing server chay TCP socket va lam viec voi MySQL. -->
+<!-- Sau khi tao project that, reference toi DrawTogether.Shared va MySqlConnector. -->

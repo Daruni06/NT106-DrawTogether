@@ -1,0 +1,3 @@
+-- Dinh nghia cau truc MySQL cho he thong.
+-- Can co bang Users, Rooms, DrawHistory va co the them ChatHistory.
+-- Chi server doc/ghi database, client khong ket noi DB truc tiep.
