@@ -21,6 +21,11 @@ namespace DrawTogether.Client.Network
 
                 _stream = _client.GetStream();
 
+                _receiver = new ReceiveThread(_stream);
+
+                _receiver.OnMessageReceived = HandleMessage;
+
+                _receiver.Start();
                 Console.WriteLine("Connected to server");
 
                 StartReceiveThread();
