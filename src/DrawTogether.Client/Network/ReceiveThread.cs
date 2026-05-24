@@ -5,6 +5,7 @@ using System.Threading;
 
 namespace DrawTogether.Client.Network
 {
+    public Action<string> OnMessageReceived;
     public class ReceiveThread
     {
         private readonly NetworkStream _stream;
@@ -49,7 +50,7 @@ namespace DrawTogether.Client.Network
 
                     string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
 
-                    Console.WriteLine("Received: " + message);
+                    OnMessageReceived?.Invoke(message);
 
                     // Handle message
                 }
