@@ -53,11 +53,7 @@ namespace DrawTogether.Server.Network
 
                     string json = Encoding.UTF8.GetString(buffer, 0, bytesRead);
 
-                    Message msg = MessageSerializer.Deserialize(json);
-
-                    Console.WriteLine("Type: " + msg.Type);
-
-                    HandleMessage(msg);
+                   
 
                     Send("Server received: " + message);
                 }
@@ -69,23 +65,7 @@ namespace DrawTogether.Server.Network
                 }
             }
         }
-        private void HandleMessage(Message msg)
-        {
-            switch (msg.Type)
-            {
-                case MessageType.Chat:
-                    Console.WriteLine("Chat message");
-                    break;
-
-                case MessageType.Draw:
-                    Console.WriteLine("Draw message");
-                    break;
-
-                default:
-                    Console.WriteLine("Unknown message type");
-                    break;
-            }
-        }
+        
 
         public void Send(string message)
         {
