@@ -2,6 +2,7 @@ using System;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using DrawTogether.Shared.Messages;
 
 namespace DrawTogether.Server.Network
 {
@@ -50,9 +51,13 @@ namespace DrawTogether.Server.Network
                         break;
                     }
 
-                    string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                    string json = Encoding.UTF8.GetString(buffer, 0, bytesRead);
 
-                    Console.WriteLine("Received: " + message);
+                    Message msg = MessageSerializer.Deserialize(json);
+
+                    Console.WriteLine("Type: " + msg.Type);
+
+                    HandleMessage(msg);
 
                     Send("Server received: " + message);
                 }
@@ -62,6 +67,23 @@ namespace DrawTogether.Server.Network
 
                     break;
                 }
+            }
+        }
+        private void HandleMessage(Message msg)
+        {
+            switch (msg.Type)
+            {
+                case MessageType.Chat:
+                    Console.WriteLine("Chat message");
+                    break;
+
+                case MessageType.Draw:
+                    Console.WriteLine("Draw message");
+                    break;
+
+                default:
+                    Console.WriteLine("Unknown message type");
+                    break;
             }
         }
 
