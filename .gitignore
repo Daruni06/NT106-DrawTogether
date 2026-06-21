@@ -1,2 +1,12 @@
 # File nay dung de khai bao cac file/folder khong dua len Git.
 # Khi tao project Visual Studio, them bin/, obj/, .vs/ va file config chua mat khau DB vao day.
+
+.vs/
+bin/
+obj/
+*.user
+*.suo
+*.cache
+
+src/**/bin/
+src/**/obj/

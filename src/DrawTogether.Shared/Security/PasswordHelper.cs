@@ -1,2 +1,24 @@
-// Helper hash va verify mat khau.
-// Server dung khi signup/login, client khong tu hash thay cho server neu khong thong nhat protocol.
+namespace DrawTogether.Shared.Security;
+
+public static class PasswordHelper
+{
+    public static string HashPassword(string plainPassword)
+    {
+        if (string.IsNullOrWhiteSpace(plainPassword))
+        {
+            throw new ArgumentException("Password is required.", nameof(plainPassword));
+        }
+
+        return BCrypt.Net.BCrypt.HashPassword(plainPassword);
+    }
+
+    public static bool VerifyPassword(string plainPassword, string passwordHash)
+    {
+        if (string.IsNullOrWhiteSpace(plainPassword) || string.IsNullOrWhiteSpace(passwordHash))
+        {
+            return false;
+        }
+
+        return BCrypt.Net.BCrypt.Verify(plainPassword, passwordHash);
+    }
+}
