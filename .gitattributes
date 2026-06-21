@@ -1,0 +1,4 @@
+*.cs text eol=crlf
+*.sql text eol=crlf
+*.md text eol=crlf
+*.config text eol=crlf

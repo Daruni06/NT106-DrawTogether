@@ -1,50 +1,27 @@
-using System;
-using System.Security.Cryptography;
-using System.Text;
+namespace DrawTogether.Shared.Security;
 
-namespace DrawTogether.Shared.Security
+public static class PasswordHelper
 {
-    public static class PasswordHelper
+    public static string HashPassword(string plainPassword)
     {
-        public static string HashPassword(string password)
+        if (string.IsNullOrWhiteSpace(plainPassword))
         {
-            using (SHA256 sha = SHA256.Create())
-            {
-                byte[] bytes =
-                    Encoding.UTF8.GetBytes(password);
-
-                byte[] hash =
-                    sha.ComputeHash(bytes);
-
-                return Convert.ToBase64String(hash);
-            }
+            throw new ArgumentException("Password is required.", nameof(plainPassword));
         }
 
-        public static bool VerifyPassword(
-            string password,
-            string storedHash)
-        {
-            string hash =
-                HashPassword(password);
+        return BCrypt.Net.BCrypt.HashPassword(plainPassword);
+    }
 
-            return hash == storedHash;
+    public static bool VerifyPassword(string plainPassword, string passwordHash)
+    {
+        if (string.IsNullOrWhiteSpace(plainPassword) ||
+            string.IsNullOrWhiteSpace(passwordHash))
+        {
+            return false;
         }
 
-        // Token Validation
-        public static bool ValidateToken(string token)
-        {
-            if (string.IsNullOrWhiteSpace(token))
-                return false;
-
-            if (token.Length < 16)
-                return false;
-
-            return true;
-        }
-
-        public static string GenerateToken()
-        {
-            return Guid.NewGuid().ToString("N");
-        }
+        return BCrypt.Net.BCrypt.Verify(
+            plainPassword,
+            passwordHash);
     }
 }
