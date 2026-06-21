@@ -1,12 +1,11 @@
 namespace DrawTogether.Shared.Models;
 
-public sealed class ChatMessage
+public sealed class DrawAction
 {
     public long Id { get; init; }
     public string RoomId { get; init; } = string.Empty;
     public long UserId { get; init; }
-    public string Username { get; init; } = string.Empty;
-    public string DisplayName { get; init; } = string.Empty;
-    public string Message { get; init; } = string.Empty;
+    public string ActionType { get; init; } = string.Empty;
+    public string PayloadJson { get; init; } = "{}";
     public DateTime CreatedAt { get; init; }
 }

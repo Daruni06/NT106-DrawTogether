@@ -1,2 +1,9 @@
-// Model user dung chung trong message.
-// Chi chua thong tin an toan de gui qua mang, khong chua password hash neu gui ve client.
+namespace DrawTogether.Shared.Models;
+
+public sealed class User
+{
+    public long Id { get; init; }
+    public string Username { get; init; } = string.Empty;
+    public string DisplayName { get; init; } = string.Empty;
+    public DateTime CreatedAt { get; init; }
+}
