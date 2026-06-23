@@ -1,3 +1,4 @@
+
 using System.Text.Json;
 using DrawTogether.Server.Data;
 using DrawTogether.Shared.Messages;
@@ -99,3 +100,4 @@ public sealed class DrawActionSavedResponse
 {
     public DrawTogether.Shared.Models.DrawAction Action { get; init; } = new();
 }
+

@@ -1,3 +1,4 @@
+
 using DrawTogether.Server.Data;
 using DrawTogether.Shared.Messages;
 
@@ -64,3 +65,4 @@ public sealed class ChatMessageSavedResponse
 {
     public DrawTogether.Shared.Models.ChatMessage Message { get; init; } = new();
 }
+
