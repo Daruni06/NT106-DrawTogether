@@ -15,6 +15,7 @@ Moi message gui qua socket theo dang:
 - JSON encode bang UTF-8.
 - Ben nhan doc dung `length` byte roi moi parse JSON.
 - Khong gui nhieu JSON lien tiep bang cach noi chuoi khong co length prefix.
+- Gioi han message hien tai: 8 MB de ho tro file/media chat nho qua base64.
 
 ## 2. Message Envelope Chung
 
@@ -196,6 +197,29 @@ Tool values:
 |---|---|---|
 | `CHAT_SEND` | Client -> Server | `roomId`, `content` |
 | `CHAT_MESSAGE` | Server -> Client | `messageId`, `roomId`, `senderId`, `senderName`, `content`, `sentAt` |
+| `CHAT_FILE_SEND` | Client -> Server | `roomId`, `content`, `attachment` |
+| `CHAT_FILE_MESSAGE` | Server -> Client | `messageId`, `roomId`, `senderId`, `senderName`, `content`, `contentType`, `attachment`, `sentAt` |
+
+File/media chat dung attachment base64 de demo don gian:
+
+```json
+{
+  "messageId": "msg-001",
+  "roomId": "ABCD",
+  "senderId": "user-001",
+  "senderName": "Alice",
+  "content": "file demo",
+  "contentType": "IMAGE",
+  "attachment": {
+    "attachmentId": "att-001",
+    "fileName": "sketch.png",
+    "contentType": "image/png",
+    "size": 12345,
+    "base64Data": "..."
+  },
+  "sentAt": "2026-06-08T10:30:00Z"
+}
+```
 
 ### Load Balancer
 

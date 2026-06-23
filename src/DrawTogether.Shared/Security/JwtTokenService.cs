@@ -1,9 +1,8 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using DrawTogether.Shared.Messages;
 using DrawTogether.Shared.Models;
-using Microsoft.IdentityModel.Tokens;
 
 namespace DrawTogether.Shared.Security;
 
@@ -23,27 +22,19 @@ public sealed class JwtTokenService
     public (string Token, DateTime ExpiresAt) CreateToken(User user)
     {
         var expiresAt = DateTime.UtcNow.AddMinutes(_options.AccessTokenMinutes);
-
-        var claims = new List<Claim>
+        var payload = new TokenPayload
         {
-            new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new(JwtRegisteredClaimNames.UniqueName, user.Username),
-            new("display_name", user.DisplayName),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N"))
+            UserId = user.Id,
+            Username = user.Username,
+            DisplayName = user.DisplayName,
+            ExpiresAtUnix = new DateTimeOffset(expiresAt).ToUnixTimeSeconds()
         };
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.SecretKey));
-        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        var payloadJson = JsonSerializer.Serialize(payload);
+        var payloadPart = Base64UrlEncode(Encoding.UTF8.GetBytes(payloadJson));
+        var signaturePart = Sign(payloadPart);
 
-        var jwt = new JwtSecurityToken(
-            issuer: _options.Issuer,
-            audience: _options.Audience,
-            claims: claims,
-            notBefore: DateTime.UtcNow,
-            expires: expiresAt,
-            signingCredentials: credentials);
-
-        return (new JwtSecurityTokenHandler().WriteToken(jwt), expiresAt);
+        return ($"{payloadPart}.{signaturePart}", expiresAt);
     }
 
     public ServiceResult<AuthenticatedUser> ValidateToken(string accessToken)
@@ -53,46 +44,72 @@ public sealed class JwtTokenService
             return ServiceResult<AuthenticatedUser>.Fail("Missing access token.");
         }
 
-        var handler = new JwtSecurityTokenHandler();
-        var key = Encoding.UTF8.GetBytes(_options.SecretKey);
+        var parts = accessToken.Split('.');
+        if (parts.Length != 2)
+        {
+            return ServiceResult<AuthenticatedUser>.Fail("Invalid access token.");
+        }
+
+        var expectedSignature = Sign(parts[0]);
+        if (!CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(parts[1]),
+                Encoding.UTF8.GetBytes(expectedSignature)))
+        {
+            return ServiceResult<AuthenticatedUser>.Fail("Invalid access token.");
+        }
 
         try
         {
-            var principal = handler.ValidateToken(accessToken, new TokenValidationParameters
-            {
-                ValidateIssuer = true,
-                ValidIssuer = _options.Issuer,
-                ValidateAudience = true,
-                ValidAudience = _options.Audience,
-                ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new SymmetricSecurityKey(key),
-                ValidateLifetime = true,
-                ClockSkew = TimeSpan.FromSeconds(30)
-            }, out _);
+            var payloadJson = Encoding.UTF8.GetString(Base64UrlDecode(parts[0]));
+            var payload = JsonSerializer.Deserialize<TokenPayload>(payloadJson);
 
-            var userIdText = principal.FindFirstValue(JwtRegisteredClaimNames.Sub);
-            var username = principal.FindFirstValue(JwtRegisteredClaimNames.UniqueName) ?? string.Empty;
-            var displayName = principal.FindFirstValue("display_name") ?? username;
-
-            if (!long.TryParse(userIdText, out var userId))
+            if (payload is null)
             {
-                return ServiceResult<AuthenticatedUser>.Fail("Invalid token subject.");
+                return ServiceResult<AuthenticatedUser>.Fail("Invalid access token.");
+            }
+
+            var nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (payload.ExpiresAtUnix < nowUnix)
+            {
+                return ServiceResult<AuthenticatedUser>.Fail("Access token expired.");
             }
 
             return ServiceResult<AuthenticatedUser>.Ok(new AuthenticatedUser
             {
-                UserId = userId,
-                Username = username,
-                DisplayName = displayName
+                UserId = payload.UserId,
+                Username = payload.Username,
+                DisplayName = payload.DisplayName
             });
         }
-        catch (SecurityTokenExpiredException)
-        {
-            return ServiceResult<AuthenticatedUser>.Fail("Access token expired.");
-        }
-        catch (Exception)
+        catch
         {
             return ServiceResult<AuthenticatedUser>.Fail("Invalid access token.");
         }
+    }
+
+    private string Sign(string payloadPart)
+    {
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_options.SecretKey));
+        return Base64UrlEncode(hmac.ComputeHash(Encoding.UTF8.GetBytes(payloadPart)));
+    }
+
+    private static string Base64UrlEncode(byte[] bytes)
+    {
+        return Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    }
+
+    private static byte[] Base64UrlDecode(string value)
+    {
+        var padded = value.Replace('-', '+').Replace('_', '/');
+        padded += new string('=', (4 - padded.Length % 4) % 4);
+        return Convert.FromBase64String(padded);
+    }
+
+    private sealed class TokenPayload
+    {
+        public long UserId { get; set; }
+        public string Username { get; set; } = string.Empty;
+        public string DisplayName { get; set; } = string.Empty;
+        public long ExpiresAtUnix { get; set; }
     }
 }

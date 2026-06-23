@@ -1,4 +1,3 @@
-
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -36,6 +35,8 @@ public enum MessageType
 
     ChatSend,
     ChatMessage,
+    ChatFileSend,
+    ChatFileMessage,
 
     ServerRegister,
     ServerLoadUpdate,
@@ -87,6 +88,8 @@ public sealed class MessageTypeJsonConverter : JsonConverter<MessageType>
             [MessageType.CanvasSync] = "CANVAS_SYNC",
             [MessageType.ChatSend] = "CHAT_SEND",
             [MessageType.ChatMessage] = "CHAT_MESSAGE",
+            [MessageType.ChatFileSend] = "CHAT_FILE_SEND",
+            [MessageType.ChatFileMessage] = "CHAT_FILE_MESSAGE",
             [MessageType.ServerRegister] = "SERVER_REGISTER",
             [MessageType.ServerLoadUpdate] = "SERVER_LOAD_UPDATE",
             [MessageType.ServerHeartbeat] = "SERVER_HEARTBEAT",
@@ -167,4 +170,3 @@ public sealed class MessageErrorCodeJsonConverter : JsonConverter<MessageErrorCo
         writer.WriteStringValue(wireName);
     }
 }
-

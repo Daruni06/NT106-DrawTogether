@@ -1,2 +1,9 @@
 <!-- Project class library dung chung giua Client, Server va LoadBalancer. -->
 <!-- Chua message, model va helper bao mat khong phu thuoc UI/database. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+</Project>

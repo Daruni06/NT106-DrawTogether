@@ -8,7 +8,7 @@ namespace DrawTogether.Shared.Messages;
 public static class MessageSerializer
 {
     public const int HeaderSize = 4;
-    public const int MaxMessageSize = 1024 * 1024;
+    public const int MaxMessageSize = 8 * 1024 * 1024;
 
     public static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
 
