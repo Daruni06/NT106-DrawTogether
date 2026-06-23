@@ -204,7 +204,10 @@ public static class MessageSerializer
 
 public sealed class MessageFormatException : Exception
 {
-    public MessageFormatException(MessageErrorCode code, string message, Exception? innerException = null)
+    public MessageFormatException(
+        MessageErrorCode code,
+        string message,
+        Exception? innerException = null)
         : base(message, innerException)
     {
         Code = code;

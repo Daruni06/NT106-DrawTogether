@@ -1,3 +1,4 @@
+
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -166,3 +167,4 @@ public sealed class MessageErrorCodeJsonConverter : JsonConverter<MessageErrorCo
         writer.WriteStringValue(wireName);
     }
 }
+
