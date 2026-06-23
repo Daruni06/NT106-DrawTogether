@@ -1,12 +1,8 @@
-// Xu ly mot client dang ket noi.
-// Doc message JSON, goi service phu hop va gui response/broadcast.
 using System;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
-
 using DrawTogether.Shared.Messages;
-using DrawTogether.Server.Features;
 
 namespace DrawTogether.Server.Network
 {
@@ -46,8 +42,7 @@ namespace DrawTogether.Server.Network
             {
                 try
                 {
-                    int bytesRead =
-                        _stream.Read(buffer, 0, buffer.Length);
+                    int bytesRead = _stream.Read(buffer, 0, buffer.Length);
 
                     if (bytesRead == 0)
                     {
@@ -56,61 +51,33 @@ namespace DrawTogether.Server.Network
                         break;
                     }
 
-                    string json =
-                        Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                    string json = Encoding.UTF8.GetString(buffer, 0, bytesRead);
 
-                    Message msg =
-                        MessageSerializer.Deserialize(json);
+                   
 
-                    HandleMessage(msg);
+                    Send("Server received: " + message);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine(
-                        "ClientHandler error: " + ex.Message);
+                    Console.WriteLine("ClientHandler error: " + ex.Message);
 
                     break;
                 }
             }
         }
-
-        private void HandleMessage(Message msg)
-        {
-            switch (msg.Type)
-            {
-                case MessageType.Chat:
-
-                    ChatService.Handle(msg);
-
-                    break;
-
-                case MessageType.Draw:
-
-                    DrawService.Handle(msg);
-
-                    break;
-
-                default:
-
-                    Console.WriteLine("Unknown message");
-
-                    break;
-            }
-        }
+        
 
         public void Send(string message)
         {
             try
             {
-                byte[] data =
-                    Encoding.UTF8.GetBytes(message);
+                byte[] data = Encoding.UTF8.GetBytes(message);
 
                 _stream.Write(data, 0, data.Length);
             }
             catch (Exception ex)
             {
-                Console.WriteLine(
-                    "Send error: " + ex.Message);
+                Console.WriteLine("Send error: " + ex.Message);
             }
         }
     }
