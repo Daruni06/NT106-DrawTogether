@@ -14,11 +14,14 @@ public static class PasswordHelper
 
     public static bool VerifyPassword(string plainPassword, string passwordHash)
     {
-        if (string.IsNullOrWhiteSpace(plainPassword) || string.IsNullOrWhiteSpace(passwordHash))
+        if (string.IsNullOrWhiteSpace(plainPassword) ||
+            string.IsNullOrWhiteSpace(passwordHash))
         {
             return false;
         }
 
-        return BCrypt.Net.BCrypt.Verify(plainPassword, passwordHash);
+        return BCrypt.Net.BCrypt.Verify(
+            plainPassword,
+            passwordHash);
     }
 }
