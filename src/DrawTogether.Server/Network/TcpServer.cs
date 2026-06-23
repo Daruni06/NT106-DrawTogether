@@ -72,8 +72,14 @@ public sealed class TcpServer
 
         var normalizedRoomId = roomId.Trim().ToUpperInvariant();
         var clients = _roomClients.GetOrAdd(normalizedRoomId, _ => new ConcurrentDictionary<ClientHandler, byte>());
-        clients.TryAdd(client, 0);
+        var added = clients.TryAdd(client, 0);
         client.CurrentRoomId = normalizedRoomId;
+
+        if (!added)
+        {
+            // Client already in room; no need to resend full canvas sync.
+            return;
+        }
 
         var history = _roomHistory.TryGetValue(normalizedRoomId, out var strokes)
             ? strokes.ToList()

@@ -9,6 +9,7 @@ namespace DrawTogether.Client.Drawing;
 
 public sealed class CanvasState : IDisposable
 {
+    private readonly object _sync = new();
     private readonly List<Stroke> _strokes = new();
     private Image? _backgroundImage;
 
@@ -16,12 +17,25 @@ public sealed class CanvasState : IDisposable
 
     public Color BackgroundColor { get; set; } = Color.White;
 
-    public IReadOnlyList<Stroke> Strokes => _strokes;
+    public IReadOnlyList<Stroke> Strokes
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _strokes.ToList();
+            }
+        }
+    }
 
     public void SetHistory(IEnumerable<Stroke> strokes)
     {
-        _strokes.Clear();
-        _strokes.AddRange(strokes.Select(stroke => stroke.Clone()));
+        lock (_sync)
+        {
+            _strokes.Clear();
+            _strokes.AddRange(strokes.Select(stroke => stroke.Clone()));
+        }
+
         OnChanged();
     }
 
@@ -32,20 +46,27 @@ public sealed class CanvasState : IDisposable
             return;
         }
 
-        _strokes.Add(stroke.Clone());
+        lock (_sync)
+        {
+            _strokes.Add(stroke.Clone());
+        }
+
         OnChanged();
     }
 
     public Stroke? UndoLast(string? userId = null)
     {
-        for (var index = _strokes.Count - 1; index >= 0; index--)
+        lock (_sync)
         {
-            if (userId is null || _strokes[index].UserId == userId)
+            for (var index = _strokes.Count - 1; index >= 0; index--)
             {
-                var removed = _strokes[index];
-                _strokes.RemoveAt(index);
-                OnChanged();
-                return removed;
+                if (userId is null || _strokes[index].UserId == userId)
+                {
+                    var removed = _strokes[index];
+                    _strokes.RemoveAt(index);
+                    OnChanged();
+                    return removed;
+                }
             }
         }
 
@@ -54,14 +75,22 @@ public sealed class CanvasState : IDisposable
 
     public void Clear()
     {
-        _strokes.Clear();
+        lock (_sync)
+        {
+            _strokes.Clear();
+        }
+
         OnChanged();
     }
 
     public void SetBackgroundImage(Image? image)
     {
-        _backgroundImage?.Dispose();
-        _backgroundImage = image is null ? null : new Bitmap(image);
+        lock (_sync)
+        {
+            _backgroundImage?.Dispose();
+            _backgroundImage = image is null ? null : new Bitmap(image);
+        }
+
         OnChanged();
     }
 
@@ -75,7 +104,13 @@ public sealed class CanvasState : IDisposable
             graphics.DrawImage(_backgroundImage, new Rectangle(Point.Empty, canvasSize));
         }
 
-        foreach (var stroke in _strokes)
+        List<Stroke> strokes;
+        lock (_sync)
+        {
+            strokes = _strokes.Select(stroke => stroke.Clone()).ToList();
+        }
+
+        foreach (var stroke in strokes)
         {
             RenderStroke(graphics, stroke);
         }

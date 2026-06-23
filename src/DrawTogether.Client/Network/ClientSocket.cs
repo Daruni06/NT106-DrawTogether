@@ -7,6 +7,8 @@ namespace DrawTogether.Client.Network;
 
 public sealed class ClientSocket : IDisposable
 {
+    private readonly SemaphoreSlim _sendSemaphore = new(1, 1);
+
     private TcpClient? _client;
     private NetworkStream? _stream;
     private ReceiveThread? _receiver;
@@ -55,10 +57,49 @@ public sealed class ClientSocket : IDisposable
 
     public void AttachDrawingForm(DrawTogether.Client.Forms.DrawingForm form)
     {
-        form.StrokeCompleted += (_, args) => SendStroke(args.Stroke);
-        form.ClearRequested += (_, _) => SendClear(form.RoomId);
-        form.UndoRequested += (_, args) => SendUndo(form.RoomId, args.StrokeId);
-        form.ChatMessageSubmitted += (_, args) => SendChatMessage(args.Message);
+        form.StrokeCompleted += (_, args) =>
+        {
+            _ = SendStrokeAsync(args.Stroke).ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                {
+                    ConnectionFailed?.Invoke(this, t.Exception?.InnerException ?? t.Exception!);
+                }
+            }, TaskScheduler.Default);
+        };
+
+        form.ClearRequested += (_, _) =>
+        {
+            _ = SendClearAsync(form.RoomId).ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                {
+                    ConnectionFailed?.Invoke(this, t.Exception?.InnerException ?? t.Exception!);
+                }
+            }, TaskScheduler.Default);
+        };
+
+        form.UndoRequested += (_, args) =>
+        {
+            _ = SendUndoAsync(form.RoomId, args.StrokeId).ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                {
+                    ConnectionFailed?.Invoke(this, t.Exception?.InnerException ?? t.Exception!);
+                }
+            }, TaskScheduler.Default);
+        };
+
+        form.ChatMessageSubmitted += (_, args) =>
+        {
+            _ = SendChatMessageAsync(args.Message).ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                {
+                    ConnectionFailed?.Invoke(this, t.Exception?.InnerException ?? t.Exception!);
+                }
+            }, TaskScheduler.Default);
+        };
 
         StrokeReceived += (_, stroke) => form.ApplyRemoteStroke(stroke);
         ClearReceived += (_, _) => form.ApplyRemoteClear();
@@ -67,53 +108,66 @@ public sealed class ClientSocket : IDisposable
         ChatMessageReceived += (_, chatMessage) => form.ApplyRemoteChatMessage(chatMessage);
     }
 
-    public void SendStroke(Stroke stroke)
+    public Task SendStrokeAsync(Stroke stroke)
     {
         var type = stroke.Tool is DrawingToolType.Line or DrawingToolType.Rectangle or DrawingToolType.Ellipse
             ? MessageType.DrawShape
             : MessageType.DrawStroke;
 
-        Send(NetworkMessage.Create(type, stroke, roomId: stroke.RoomId, senderId: stroke.UserId));
+        return SendAsync(NetworkMessage.Create(type, stroke, roomId: stroke.RoomId, senderId: stroke.UserId));
     }
 
-    public void JoinRoom(string? roomId, string? senderId = null)
+    public void SendStroke(Stroke stroke)
+    {
+        SendStrokeAsync(stroke).GetAwaiter().GetResult();
+    }
+
+    public Task JoinRoomAsync(string? roomId, string? senderId = null)
     {
         if (string.IsNullOrWhiteSpace(roomId))
         {
-            return;
+            return Task.CompletedTask;
         }
 
-        Send(NetworkMessage.Create(
+        return SendAsync(NetworkMessage.Create(
             MessageType.JoinRoomRequest,
             new { roomId },
             roomId: roomId,
             senderId: senderId));
     }
 
-    public void SendClear(string? roomId)
+    public Task SendClearAsync(string? roomId)
     {
-        Send(NetworkMessage.Create(MessageType.ClearCanvasRequest, new { roomId }, roomId: roomId));
+        return SendAsync(NetworkMessage.Create(MessageType.ClearCanvasRequest, new { roomId }, roomId: roomId));
     }
 
-    public void SendUndo(string? roomId, string strokeId)
+    public Task SendUndoAsync(string? roomId, string strokeId)
     {
-        Send(NetworkMessage.Create(MessageType.UndoRequest, new { roomId, strokeId }, roomId: roomId));
+        return SendAsync(NetworkMessage.Create(MessageType.UndoRequest, new { roomId, strokeId }, roomId: roomId));
     }
 
-    public void SendChatMessage(ChatMessage message)
+    public Task SendChatMessageAsync(ChatMessage message)
     {
         var type = message.Attachment is null ? MessageType.ChatSend : MessageType.ChatFileSend;
-        Send(NetworkMessage.Create(type, message, roomId: message.RoomId, senderId: message.SenderId));
+        return SendAsync(NetworkMessage.Create(type, message, roomId: message.RoomId, senderId: message.SenderId));
     }
 
-    public void Send(NetworkMessage message)
+    public async Task SendAsync(NetworkMessage message)
     {
         if (_stream is null)
         {
             throw new InvalidOperationException("Client is not connected.");
         }
 
-        MessageSerializer.WriteAsync(_stream, message).GetAwaiter().GetResult();
+        await _sendSemaphore.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await MessageSerializer.WriteAsync(_stream, message).ConfigureAwait(false);
+        }
+        finally
+        {
+            _sendSemaphore.Release();
+        }
     }
 
     public void Disconnect()

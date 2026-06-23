@@ -60,16 +60,34 @@ public sealed class DrawingForm : Form
 
     public void ApplyRemoteStroke(Stroke stroke)
     {
+        if (InvokeRequired)
+        {
+            BeginInvoke((Action)(() => ApplyRemoteStroke(stroke)));
+            return;
+        }
+
         _canvasState.AddStroke(stroke);
     }
 
     public void ApplyRemoteClear()
     {
+        if (InvokeRequired)
+        {
+            BeginInvoke((Action)ApplyRemoteClear);
+            return;
+        }
+
         _canvasState.Clear();
     }
 
     public void ApplyRemoteUndo(string strokeId)
     {
+        if (InvokeRequired)
+        {
+            BeginInvoke((Action)(() => ApplyRemoteUndo(strokeId)));
+            return;
+        }
+
         var remaining = _canvasState.Strokes
             .Where(stroke => stroke.StrokeId != strokeId)
             .Select(stroke => stroke.Clone())
@@ -80,11 +98,23 @@ public sealed class DrawingForm : Form
 
     public void LoadHistory(IEnumerable<Stroke> strokes)
     {
+        if (InvokeRequired)
+        {
+            BeginInvoke((Action)(() => LoadHistory(strokes)));
+            return;
+        }
+
         _canvasState.SetHistory(strokes);
     }
 
     public void ApplyRemoteChatMessage(ChatMessage message)
     {
+        if (InvokeRequired)
+        {
+            BeginInvoke((Action)(() => ApplyRemoteChatMessage(message)));
+            return;
+        }
+
         AddChatBubble(message);
     }
 

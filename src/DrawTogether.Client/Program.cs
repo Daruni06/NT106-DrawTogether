@@ -21,12 +21,12 @@ internal static class Program
         var form = new DrawingForm(roomId, userId, displayName);
         socket.AttachDrawingForm(form);
 
-        form.Shown += (_, _) =>
+        form.Shown += async (_, _) =>
         {
             try
             {
                 socket.Connect(host, port);
-                socket.JoinRoom(roomId, userId);
+                await socket.JoinRoomAsync(roomId, userId).ConfigureAwait(true);
                 form.Text = $"Draw Together - {roomId} - connected {host}:{port}";
             }
             catch (Exception ex)
