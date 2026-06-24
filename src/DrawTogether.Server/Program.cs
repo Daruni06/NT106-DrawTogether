@@ -2,11 +2,10 @@ using DrawTogether.Server.Configuration;
 using DrawTogether.Server.Data;
 using DrawTogether.Server.Features;
 using DrawTogether.Server.Network;
-<<<<<<< Updated upstream
 using DrawTogether.Shared.Security;
-=======
-using DrawTogether.Server.Features;
->>>>>>> Stashed changes
+using System.Net.Sockets;
+using System.Text.Json;
+using System.Text;
 
 namespace DrawTogether.Server;
 
@@ -14,13 +13,7 @@ internal static class Program
 {
     static void Main(string[] args)
     {
-<<<<<<< Updated upstream
         var port = args.Length > 0 ? int.Parse(args[0]) : 5000;
-=======
-        var port = args.Length > 0 && int.TryParse(args[0], out var parsedPort)
-            ? parsedPort
-            : 5000;
->>>>>>> Stashed changes
 
         var dbOptions = new DatabaseOptions
         {
@@ -51,21 +44,42 @@ internal static class Program
         var server = new TcpServer(router);
         server.Start(port);
 
-<<<<<<< Updated upstream
-        Console.WriteLine("Server running...");
-=======
-        ServerRegistrationService
-            .RegisterAsync(
-                "127.0.0.1",
-                8088,
-                $"127.0.0.1:{port}")
-            .GetAwaiter()
-            .GetResult();
+        // Try to register this drawing server with the load balancer (best-effort)
+        try
+        {
+            RegisterWithLoadBalancer("127.0.0.1", 8088, port);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Load balancer registration failed: {ex.Message}");
+        }
 
-        Console.WriteLine("Press Enter to stop drawing server.");
->>>>>>> Stashed changes
+        Console.WriteLine("Server running...");
         Console.ReadLine();
 
         server.Stop();
+    }
+
+    private static void RegisterWithLoadBalancer(string lbHost, int lbPort, int serverPort)
+    {
+        try
+        {
+            using var client = new TcpClient();
+            client.Connect(lbHost, lbPort);
+            using var stream = client.GetStream();
+
+            var addr = $"127.0.0.1:{serverPort}";
+            var payload = new { type = "REGISTER_SERVER", payload = new { server_address = addr } };
+            var json = JsonSerializer.Serialize(payload);
+            var bytes = Encoding.UTF8.GetBytes(json);
+            stream.Write(bytes, 0, bytes.Length);
+            stream.Flush();
+
+            Console.WriteLine($"Registered with load balancer: {addr}");
+        }
+        catch
+        {
+            throw;
+        }
     }
 }

@@ -48,6 +48,12 @@ namespace DrawTogether.LoadBalancer.Handlers
                 }
                 else if (type == "REQUEST_SERVER")
                 {
+                    string? roomId = null;
+                    if (doc.RootElement.GetProperty("payload").TryGetProperty("room_id", out var r))
+                    {
+                        roomId = r.GetString();
+                    }
+
                     string? targetServer;
 
                     lock (_lock)
@@ -58,9 +64,7 @@ namespace DrawTogether.LoadBalancer.Handlers
                             return;
                         }
 
-                        targetServer =
-                            _loadBalancer.GetNextServer(
-                                _registry.GetAll());
+                        targetServer = _loadBalancer.GetServerForRoom(roomId ?? string.Empty, _registry.GetAll());
                     }
 
                     var response = new
@@ -116,6 +120,7 @@ namespace DrawTogether.LoadBalancer.Handlers
                         lock (_lock)
                         {
                             _registry.Remove(server);
+                                _loadBalancer.RemoveServer(server);
                         }
                     }
                 }

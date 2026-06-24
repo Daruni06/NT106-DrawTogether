@@ -1,7 +1,7 @@
 using System;
 using System.Drawing;
 using System.Windows.Forms;
-using DrawTogether.Client.Network;
+
 namespace DrawTogether.Client.Forms
 {
 	public partial class LobbyForm : Form
@@ -30,6 +30,31 @@ namespace DrawTogether.Client.Forms
 				btnLogout.Left = btnCreate.Left;
 		}
 
+		private static async System.Threading.Tasks.Task<string?> QueryLoadBalancerAsync(string lbHost, int lbPort, string roomId)
+		{
+			try
+			{
+				using var client = new System.Net.Sockets.TcpClient();
+				await client.ConnectAsync(lbHost, lbPort).ConfigureAwait(false);
+				using var stream = client.GetStream();
+				var msg = System.Text.Json.JsonSerializer.Serialize(new { type = "REQUEST_SERVER", payload = new { room_id = roomId } });
+				var bytes = System.Text.Encoding.UTF8.GetBytes(msg);
+				await stream.WriteAsync(bytes.AsMemory(0, bytes.Length)).ConfigureAwait(false);
+				await stream.FlushAsync().ConfigureAwait(false);
+
+				using var reader = new System.IO.StreamReader(stream, System.Text.Encoding.UTF8);
+				var line = await reader.ReadLineAsync().ConfigureAwait(false);
+				if (string.IsNullOrWhiteSpace(line)) return null;
+				using var doc = System.Text.Json.JsonDocument.Parse(line);
+				var server = doc.RootElement.GetProperty("payload").GetProperty("server_address").GetString();
+				return server;
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
 		private async System.Threading.Tasks.Task OpenDrawingRoomAsync(string roomId)
 		{
 			var userId = Guid.NewGuid().ToString("N")[..8];
@@ -41,38 +66,36 @@ namespace DrawTogether.Client.Forms
 
 			form.Shown += async (_, _) =>
 			{
+				string host = "127.0.0.1";
+				int port = 5000;
 				try
 				{
-                    string? serverAddress =
-    await LoadBalancerClient.RequestServerAsync();
+					// Ask load balancer for assigned server (best-effort)
+					try
+					{
+						var assigned = await QueryLoadBalancerAsync("127.0.0.1", 8088, roomId).ConfigureAwait(true);
+						if (!string.IsNullOrWhiteSpace(assigned))
+						{
+							var parts = assigned.Split(':');
+							if (parts.Length == 2 && int.TryParse(parts[1], out var p))
+							{
+								host = parts[0];
+								port = p;
+							}
+						}
+					}
+					catch { /* ignore LB failures and fallback to localhost */ }
 
-                    if (string.IsNullOrWhiteSpace(serverAddress))
-                    {
-                        throw new Exception(
-                            "Khong nhan duoc server tu Load Balancer.");
-                    }
-
-                    string[] parts =
-                        serverAddress.Split(':');
-
-                    string host = parts[0];
-                    int port = int.Parse(parts[1]);
-
-                    socket.Connect(host, port);
-
-                    await socket.JoinRoomAsync(
-                        roomId,
-                        userId);
-
-                    form.Text =
-                        $"Draw Together - {roomId} - connected {serverAddress}";
-                }
+					socket.Connect(host, port);
+					await socket.JoinRoomAsync(roomId, userId).ConfigureAwait(true);
+					form.Text = $"Draw Together - {roomId} - connected {host}:{port}";
+				}
 				catch (Exception ex)
 				{
 					form.Text = $"Draw Together - {roomId} - offline";
 					MessageBox.Show(
 						form,
-						$"Could not connect to server 127.0.0.1:5000.\nYou can still draw locally.\n\n{ex.Message}",
+						$"Could not connect to server {host}:{port}.\nYou can still draw locally.\n\n{ex.Message}",
 						"Connection failed",
 						MessageBoxButtons.OK,
 						MessageBoxIcon.Warning);
