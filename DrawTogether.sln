@@ -1,6 +1,6 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 18
-VisualStudioVersion = 18.7.11903.348 stable
+# Visual Studio Version 17
+VisualStudioVersion = 17.4.33602.111
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DrawTogether.Client", "src\DrawTogether.Client\DrawTogether.Client.csproj", "{E4280CDA-1A1D-47BA-82DE-FE81399016F8}"
 EndProject
@@ -37,6 +37,6 @@ Global
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {79A97641-383F-43D8-97AC-C163AB6065CC}
+		SolutionGuid = {5C5B3D74-8318-41FA-A14C-9FE93E69F2FE}
 	EndGlobalSection
 EndGlobal

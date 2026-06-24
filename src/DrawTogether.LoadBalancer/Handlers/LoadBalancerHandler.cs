@@ -4,14 +4,15 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-
+using DrawTogether.LoadBalancer.Features;
 namespace DrawTogether.LoadBalancer.Handlers
 {
     public class LoadBalancerHandler
     {
         private readonly TcpClient _client;
-        private static readonly List<string> _drawingServers = new List<string>();
-        private static int _currentIndex = 0;
+        private static readonly ServerRegistry _registry = new();
+        private static readonly LoadBalancingService _loadBalancer = new();
+        private static readonly HealthCheckService _healthChecker = new();
         private static readonly object _lock = new object();
 
         public LoadBalancerHandler(TcpClient client)
@@ -41,26 +42,25 @@ namespace DrawTogether.LoadBalancer.Handlers
                     string serverAddress = doc.RootElement.GetProperty("payload").GetProperty("server_address").GetString();
                     lock (_lock)
                     {
-                        if (!_drawingServers.Contains(serverAddress))
-                        {
-                            _drawingServers.Add(serverAddress);
-                        }
+                        _registry.Register(serverAddress);
                     }
                     Console.WriteLine($"[Load Balancer] Vua them Server moi vao so: {serverAddress}");
                 }
                 else if (type == "REQUEST_SERVER")
                 {
-                    string targetServer = "";
+                    string? targetServer;
+
                     lock (_lock)
                     {
-                        if (_drawingServers.Count == 0)
+                        if (_registry.Count == 0)
                         {
                             Console.WriteLine("[Load Balancer] Tiem dang trong, khong co Server nao song de phan bo!");
                             return;
                         }
 
-                        targetServer = _drawingServers[_currentIndex];
-                        _currentIndex = (_currentIndex + 1) % _drawingServers.Count;
+                        targetServer =
+                            _loadBalancer.GetNextServer(
+                                _registry.GetAll());
                     }
 
                     var response = new
@@ -102,43 +102,23 @@ namespace DrawTogether.LoadBalancer.Handlers
                 List<string> serversToCheck;
                 lock (_lock)
                 {
-                    serversToCheck = new List<string>(_drawingServers); 
+                    serversToCheck = _registry.GetAll();
                 }
 
                 foreach (var server in serversToCheck)
                 {
-                    bool isAlive = await PingServerAsync(server);
+                    bool isAlive =
+                        await _healthChecker
+        .                   PingServerAsync(server);
                     if (!isAlive)
                     {
                         Console.WriteLine($"[HealthCheck] Phat hien Server [{server}] DA CHET! => Xoa khoi so.");
                         lock (_lock)
                         {
-                            _drawingServers.Remove(server);
-                            if (_drawingServers.Count == 0) _currentIndex = 0;
-                            else _currentIndex = _currentIndex % _drawingServers.Count;
+                            _registry.Remove(server);
                         }
                     }
                 }
-            }
-        }
-
-        private static async Task<bool> PingServerAsync(string serverAddress)
-        {
-            try
-            {
-                string[] parts = serverAddress.Split(':');
-                using TcpClient pingClient = new TcpClient();
-
-                Task connectTask = pingClient.ConnectAsync(parts[0], int.Parse(parts[1]));
-                if (await Task.WhenAny(connectTask, Task.Delay(2000)) != connectTask)
-                {
-                    return false; // Quá thời gian (Timeout)
-                }
-                return pingClient.Connected;
-            }
-            catch
-            {
-                return false; // Lỗi từ chối kết nối
             }
         }
     }

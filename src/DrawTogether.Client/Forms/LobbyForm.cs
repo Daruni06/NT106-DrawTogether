@@ -1,7 +1,7 @@
 using System;
 using System.Drawing;
 using System.Windows.Forms;
-
+using DrawTogether.Client.Network;
 namespace DrawTogether.Client.Forms
 {
 	public partial class LobbyForm : Form
@@ -43,10 +43,30 @@ namespace DrawTogether.Client.Forms
 			{
 				try
 				{
-					socket.Connect("127.0.0.1", 5000);
-					await socket.JoinRoomAsync(roomId, userId).ConfigureAwait(true);
-					form.Text = $"Draw Together - {roomId} - connected 127.0.0.1:5000";
-				}
+                    string? serverAddress =
+    await LoadBalancerClient.RequestServerAsync();
+
+                    if (string.IsNullOrWhiteSpace(serverAddress))
+                    {
+                        throw new Exception(
+                            "Khong nhan duoc server tu Load Balancer.");
+                    }
+
+                    string[] parts =
+                        serverAddress.Split(':');
+
+                    string host = parts[0];
+                    int port = int.Parse(parts[1]);
+
+                    socket.Connect(host, port);
+
+                    await socket.JoinRoomAsync(
+                        roomId,
+                        userId);
+
+                    form.Text =
+                        $"Draw Together - {roomId} - connected {serverAddress}";
+                }
 				catch (Exception ex)
 				{
 					form.Text = $"Draw Together - {roomId} - offline";
