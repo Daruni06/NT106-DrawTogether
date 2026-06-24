@@ -1,6 +1,7 @@
 using System.Net.Sockets;
 using DrawTogether.Shared.Messages;
 using DrawTogether.Shared.Models;
+using DrawTogether.Client.Forms;
 using NetworkMessage = DrawTogether.Shared.Messages.Message;
 
 namespace DrawTogether.Client.Network;
@@ -55,7 +56,7 @@ public sealed class ClientSocket : IDisposable
         _receiver.Start();
     }
 
-    public void AttachDrawingForm(DrawTogether.Client.Forms.DrawingForm form)
+    public void AttachDrawingForm(DrawingForm form)
     {
         form.StrokeCompleted += (_, args) =>
         {
