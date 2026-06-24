@@ -10,137 +10,139 @@ namespace DrawTogether.Server.Network;
 
 public class ClientHandler
 {
-private readonly TcpClient _client;
+    private readonly TcpClient _client;
 
+    private readonly TcpServer _server;
 
-private readonly TcpServer _server;
+    private readonly Stream _stream;
 
-private readonly Stream _stream;
+    private readonly MessageRouter _router;
 
-private Thread? _thread;
+    private Thread? _thread;
 
-private bool _running;
+    private bool _running;
 
-public string? CurrentRoomId { get; set; }
+    public string? CurrentRoomId { get; set; }
 
-public ClientHandler(
-    TcpClient client,
-    SslStream ssl,
-    TcpServer server)
-{
-    _client = client;
-    _stream = ssl;
-    _server = server;
-}
-
-public void Start()
-{
-    _running = true;
-
-    _thread = new Thread(ProcessClient)
+    public ClientHandler(
+        TcpClient client,
+        SslStream ssl,
+        TcpServer server,
+        MessageRouter router)
     {
-        IsBackground = true
-    };
-
-    _thread.Start();
-}
-
-public void Stop()
-{
-    _running = false;
-
-    try
-    {
-        _stream.Close();
-    }
-    catch
-    {
+        _client = client;
+        _stream = ssl;
+        _server = server;
+        _router = router;
     }
 
-    try
+    public void Start()
     {
-        _client.Close();
-    }
-    catch
-    {
-    }
-}
+        _running = true;
 
-private void ProcessClient()
-{
-    byte[] buffer = new byte[4096];
+        _thread = new Thread(ProcessClient)
+        {
+            IsBackground = true
+        };
 
-    while (_running)
+        _thread.Start();
+    }
+
+    public void Stop()
     {
+        _running = false;
+
         try
         {
-            int bytesRead =
-                _stream.Read(
-                    buffer,
-                    0,
-                    buffer.Length);
+            _stream.Close();
+        }
+        catch
+        {
+        }
 
-            if (bytesRead == 0)
+        try
+        {
+            _client.Close();
+        }
+        catch
+        {
+        }
+    }
+
+    private void ProcessClient()
+    {
+        byte[] buffer = new byte[4096];
+
+        while (_running)
+        {
+            try
+            {
+                int bytesRead =
+                    _stream.Read(
+                        buffer,
+                        0,
+                        buffer.Length);
+
+                if (bytesRead == 0)
+                {
+                    Console.WriteLine(
+                        "Client disconnected");
+
+                    break;
+                }
+
+                string raw =
+                    Encoding.UTF8.GetString(
+                        buffer,
+                        0,
+                        bytesRead);
+
+                Console.WriteLine(
+                    "Received: " + raw);
+
+                Send(
+                    "Server received: " + raw);
+            }
+            catch (Exception ex)
             {
                 Console.WriteLine(
-                    "Client disconnected");
+                    "ClientHandler error: " +
+                    ex.Message);
 
                 break;
             }
+        }
 
-            string message =
-                Encoding.UTF8.GetString(
-                    buffer,
-                    0,
-                    bytesRead);
+        _server.Unregister(this);
 
-            Console.WriteLine(
-                "Received: " + message);
+        Stop();
+    }
 
-            Send(
-                "Server received: " + message);
+    public void Send(string message)
+    {
+        try
+        {
+            byte[] data =
+                Encoding.UTF8.GetBytes(message);
+
+            _stream.Write(
+                data,
+                0,
+                data.Length);
+
+            _stream.Flush();
         }
         catch (Exception ex)
         {
             Console.WriteLine(
-                "ClientHandler error: " +
+                "Send error: " +
                 ex.Message);
-
-            break;
         }
     }
 
-    _server.Unregister(this);
-
-    Stop();
-}
-
-public void Send(string message)
-{
-    try
+    public void Send(DrawTogether.Shared.Messages.Message message)
     {
-        byte[] data =
-            Encoding.UTF8.GetBytes(message);
-
-        _stream.Write(
-            data,
-            0,
-            data.Length);
-
-        _stream.Flush();
+        Send(MessageSerializer.Serialize(message));
     }
-    catch (Exception ex)
-    {
-        Console.WriteLine(
-            "Send error: " +
-            ex.Message);
-    }
-}
-
-public void Send(Message message)
-{
-    Send(MessageSerializer.Serialize(message));
-}
-
 
 }
