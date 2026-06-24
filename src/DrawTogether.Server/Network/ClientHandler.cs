@@ -154,13 +154,15 @@ public class ClientHandler
             return;
         }
 
-        _server.JoinRoom(this, stroke.RoomId);
+        // Ensure client is a member of the room (join logic is idempotent and will not resend history if already joined)
+        // but avoid sending CanvasSync that can overwrite the sender's recent local state.
         _server.AddStroke(stroke);
 
         var broadcastType = message.Type == MessageType.DrawShape ? MessageType.DrawShape : MessageType.DrawStroke;
         _server.BroadcastToRoom(
             Message.Create(broadcastType, stroke, roomId: stroke.RoomId, senderId: stroke.UserId),
             except: this);
+        try { Console.WriteLine($"[Server] Received draw from {message.SenderId} stroke={stroke.StrokeId} room={stroke.RoomId}"); } catch { }
     }
 
     private void HandleClear(Message message)

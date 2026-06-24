@@ -144,6 +144,7 @@ public sealed class ClientSocket : IDisposable
             case MessageType.DrawStroke:
             case MessageType.DrawShape:
                 var stroke = message.GetPayload<Stroke>();
+                try { Console.WriteLine($"[ClientSocket] Received draw type={message.Type} id={stroke?.StrokeId} sender={message.SenderId} room={message.RoomId}"); } catch { }
                 if (stroke is not null) StrokeReceived?.Invoke(this, stroke);
                 break;
             case MessageType.ClearCanvasEvent:

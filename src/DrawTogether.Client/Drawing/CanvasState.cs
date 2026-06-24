@@ -55,6 +55,12 @@ public sealed class CanvasState : IDisposable
             _redo.Clear();
         }
 
+        try
+        {
+            Console.WriteLine($"[CanvasState] AddStroke id={stroke.StrokeId} user={stroke.UserId} points={stroke.Points.Count} total={_strokes.Count}");
+        }
+        catch { }
+
         OnChanged();
     }
 

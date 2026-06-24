@@ -164,7 +164,22 @@ namespace DrawTogether.Client.Forms
             }
 
             // Canvas rendering and mouse
-            _canvasState.Changed += (_, _) => _canvasPanel.Invalidate();
+            _canvasState.Changed += (_, _) =>
+            {
+                if (_canvasPanel.InvokeRequired)
+                {
+                    _canvasPanel.BeginInvoke((Action)(() =>
+                    {
+                        _canvasPanel.Invalidate();
+                        _canvasPanel.Refresh();
+                    }));
+                }
+                else
+                {
+                    _canvasPanel.Invalidate();
+                    _canvasPanel.Refresh();
+                }
+            };
 
             _canvasPanel.Paint += (_, args) => _canvasState.Render(args.Graphics, _canvasPanel.ClientSize, _currentStroke);
 
@@ -194,6 +209,7 @@ namespace DrawTogether.Client.Forms
                 var completedStroke = _currentStroke.Clone();
 
                 _canvasState.AddStroke(completedStroke);
+                try { Console.WriteLine($"[DrawingForm] Local stroke completed id={completedStroke.StrokeId} points={completedStroke.Points.Count}"); } catch { }
                 StrokeCompleted?.Invoke(this, new StrokeCompletedEventArgs(completedStroke));
 
                 _currentStroke = null;
@@ -526,3 +542,33 @@ namespace DrawTogether.Client.Forms
         }
     }
 }
+
+    public sealed class StrokeCompletedEventArgs : EventArgs
+    {
+        public StrokeCompletedEventArgs(Stroke stroke)
+        {
+            Stroke = stroke;
+        }
+
+        public Stroke Stroke { get; }
+    }
+
+    public sealed class StrokeUndoEventArgs : EventArgs
+    {
+        public StrokeUndoEventArgs(string strokeId)
+        {
+            StrokeId = strokeId;
+        }
+
+        public string StrokeId { get; }
+    }
+
+    public sealed class ChatMessageEventArgs : EventArgs
+    {
+        public ChatMessageEventArgs(ChatMessage message)
+        {
+            Message = message;
+        }
+
+        public ChatMessage Message { get; }
+    }

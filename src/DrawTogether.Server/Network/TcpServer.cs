@@ -88,16 +88,22 @@ public sealed class TcpServer
         var room = _roomClients.GetOrAdd(roomId,
             _ => new ConcurrentDictionary<ClientHandler, byte>());
 
+        var alreadyInRoom = room.ContainsKey(client);
         room.TryAdd(client, 0);
+        var previousRoom = client.CurrentRoomId;
         client.CurrentRoomId = roomId;
 
-        if (_roomHistory.TryGetValue(roomId, out var history))
+        // Only send canvas sync when the client newly joins or switches rooms
+        if (!alreadyInRoom || !string.Equals(previousRoom, roomId, StringComparison.OrdinalIgnoreCase))
         {
-            client.Send(Message.Create(
-                MessageType.CanvasSync,
-                new { strokes = history },
-                roomId: roomId,
-                senderId: "server"));
+            if (_roomHistory.TryGetValue(roomId, out var history))
+            {
+                client.Send(Message.Create(
+                    MessageType.CanvasSync,
+                    new { strokes = history },
+                    roomId: roomId,
+                    senderId: "server"));
+            }
         }
     }
 
