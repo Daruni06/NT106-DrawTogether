@@ -5,142 +5,165 @@ using System.Security.Authentication;
 using System.Text;
 using System.Threading.Tasks;
 using DrawTogether.Client.Forms;
-using SharedMessage = DrawTogether.Shared.Messages.Message;
 using DrawTogether.Shared.Messages;
+using DrawTogether.Shared.Models;
+using NetworkMessage = DrawTogether.Shared.Messages.Message;
 
-namespace DrawTogether.Client.Network
+namespace DrawTogether.Client.Network;
+
+public sealed class ClientSocket : IDisposable
 {
-    public class ClientSocket : IDisposable
+    private readonly SemaphoreSlim _sendSemaphore = new(1, 1);
+
+    private TcpClient? _client;
+    private Stream? _stream;
+    private ReceiveThread? _receiver;
+
+    public event EventHandler<Stroke>? StrokeReceived;
+    public event EventHandler<string>? UndoReceived;
+    public event EventHandler? ClearReceived;
+    public event EventHandler<IReadOnlyList<Stroke>>? CanvasSyncReceived;
+    public event EventHandler<ChatMessage>? ChatMessageReceived;
+    public event EventHandler<Exception>? ConnectionFailed;
+
+    public bool IsConnected => _client?.Connected == true && _stream is not null;
+
+    public void Connect(string host, int port)
     {
-        private TcpClient _client;
+        Disconnect();
 
-        private SslStream _ssl;
+        _client = new TcpClient();
+        _client.Connect(host, port);
 
-        private ReceiveThread _receiver;
+        var ssl = new SslStream(_client.GetStream(), false, (sender, cert, chain, errors) => true);
+        ssl.AuthenticateAsClient(host);
 
-        private DrawingForm? _drawingForm;
+        _stream = ssl;
 
-        private bool _disposed;
+        _receiver = new ReceiveThread(_stream);
+        _receiver.MessageReceived += (_, message) => HandleMessage(message);
+        _receiver.ReceiveFailed += (_, ex) => ConnectionFailed?.Invoke(this, ex);
+        _receiver.Start();
+    }
 
-        public void AttachDrawingForm(DrawingForm form)
+    public async Task ConnectAsync(string host, int port, CancellationToken cancellationToken = default)
+    {
+        Disconnect();
+        _client = new TcpClient();
+        await _client.ConnectAsync(host, port, cancellationToken).ConfigureAwait(false);
+
+        var ssl = new SslStream(_client.GetStream(), false, (sender, cert, chain, errors) => true);
+        await ssl.AuthenticateAsClientAsync(host).ConfigureAwait(false);
+
+        _stream = ssl;
+
+        _receiver = new ReceiveThread(_stream);
+        _receiver.MessageReceived += (_, message) => HandleMessage(message);
+        _receiver.ReceiveFailed += (_, ex) => ConnectionFailed?.Invoke(this, ex);
+        _receiver.Start();
+    }
+
+    public Task JoinRoomAsync(string? roomId, string? senderId = null)
+    {
+        if (string.IsNullOrWhiteSpace(roomId)) return Task.CompletedTask;
+        return SendAsync(NetworkMessage.Create(MessageType.JoinRoomRequest, new { roomId }, roomId: roomId, senderId: senderId));
+    }
+
+    public Task SendStrokeAsync(Stroke stroke)
+    {
+        var type = stroke.Tool is DrawingToolType.Line or DrawingToolType.Rectangle or DrawingToolType.Ellipse ? MessageType.DrawShape : MessageType.DrawStroke;
+        return SendAsync(NetworkMessage.Create(type, stroke, roomId: stroke.RoomId, senderId: stroke.UserId));
+    }
+
+    public Task SendClearAsync(string? roomId) => SendAsync(NetworkMessage.Create(MessageType.ClearCanvasRequest, new { roomId }, roomId: roomId));
+    public Task SendUndoAsync(string? roomId, string strokeId) => SendAsync(NetworkMessage.Create(MessageType.UndoRequest, new { roomId, strokeId }, roomId: roomId));
+    public Task SendChatMessageAsync(ChatMessage message) => SendAsync(NetworkMessage.Create(message.Attachment is null ? MessageType.ChatSend : MessageType.ChatFileSend, message, roomId: message.RoomId, senderId: message.SenderId));
+
+    public async Task SendAsync(NetworkMessage message)
+    {
+        if (_stream is null) throw new InvalidOperationException("Client is not connected.");
+        await _sendSemaphore.WaitAsync().ConfigureAwait(false);
+        try { await MessageSerializer.WriteAsync(_stream, message).ConfigureAwait(false); }
+        finally { _sendSemaphore.Release(); }
+    }
+
+    public void Disconnect()
+    {
+        _receiver?.Stop(); _receiver = null;
+        _stream?.Close(); _stream = null;
+        _client?.Close(); _client = null;
+    }
+
+    public void Dispose() { Disconnect(); }
+
+    public void AttachDrawingForm(DrawTogether.Client.Forms.DrawingForm form)
+    {
+        form.StrokeCompleted += (_, args) =>
         {
-            _drawingForm = form;
-        }
+            _ = SendStrokeAsync(args.Stroke).ContinueWith(t =>
+            {
+                if (t.IsFaulted) ConnectionFailed?.Invoke(this, t.Exception?.InnerException ?? t.Exception!);
+            }, TaskScheduler.Default);
+        };
 
-        public bool Connect(string ip, int port)
+        form.ClearRequested += (_, _) =>
         {
-            try
+            _ = SendClearAsync(form.RoomId).ContinueWith(t =>
             {
-                _client = new TcpClient();
+                if (t.IsFaulted) ConnectionFailed?.Invoke(this, t.Exception?.InnerException ?? t.Exception!);
+            }, TaskScheduler.Default);
+        };
 
-                _client.Connect(ip, port);
-
-                _ssl = new SslStream(
-                    _client.GetStream(),
-                    false,
-                    (sender, cert, chain, errors) => true);
-
-                _ssl.AuthenticateAsClient(
-                    "drawtogether.local",
-                    null,
-                    SslProtocols.Tls12,
-                    false);
-
-                _receiver = new ReceiveThread(_ssl);
-
-                _receiver.OnMessageReceived = HandleMessage;
-
-                _receiver.Start();
-
-                Console.WriteLine("Connected to server (TLS)");
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Connect error: " + ex.Message);
-
-                return false;
-            }
-        }
-
-        public async Task JoinRoomAsync(string roomId, string userId)
+        form.UndoRequested += (_, args) =>
         {
-            var message = SharedMessage.Create(
-                MessageType.JoinRoomRequest,
-                new { roomId, userId },
-                roomId: roomId,
-                senderId: userId);
+            _ = SendUndoAsync(form.RoomId, args.StrokeId).ContinueWith(t =>
+            {
+                if (t.IsFaulted) ConnectionFailed?.Invoke(this, t.Exception?.InnerException ?? t.Exception!);
+            }, TaskScheduler.Default);
+        };
 
-            SendMessage(MessageSerializer.Serialize(message));
-
-            await Task.CompletedTask;
-        }
-
-        private void HandleMessage(string raw)
+        form.ChatMessageSubmitted += (_, args) =>
         {
-            Console.WriteLine("Server: " + raw);
-
-            try
+            _ = SendChatMessageAsync(args.Message).ContinueWith(t =>
             {
-                var message = MessageSerializer.Deserialize(raw);
-                // Forward to drawing form if attached
-                // (extend here as needed)
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("HandleMessage error: " + ex.Message);
-            }
-        }
+                if (t.IsFaulted) ConnectionFailed?.Invoke(this, t.Exception?.InnerException ?? t.Exception!);
+            }, TaskScheduler.Default);
+        };
 
-        public void SendMessage(string message)
+        StrokeReceived += (_, stroke) => form.ApplyRemoteStroke(stroke);
+        ClearReceived += (_, _) => form.ApplyRemoteClear();
+        UndoReceived += (_, strokeId) => form.ApplyRemoteUndo(strokeId);
+        CanvasSyncReceived += (_, strokes) => form.LoadHistory(strokes);
+        ChatMessageReceived += (_, chat) => form.ApplyRemoteChatMessage(chat);
+    }
+
+    private void HandleMessage(NetworkMessage message)
+    {
+        switch (message.Type)
         {
-            try
-            {
-                if (_ssl == null)
-                    return;
-
-                byte[] data =
-                    Encoding.UTF8.GetBytes(message);
-
-                _ssl.Write(data, 0, data.Length);
-
-                _ssl.Flush();
-
-                Console.WriteLine("Sent: " + message);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Send error: " + ex.Message);
-            }
-        }
-
-        public void Disconnect()
-        {
-            try
-            {
-                _receiver?.Stop();
-
-                _ssl?.Close();
-
-                _client?.Close();
-
-                Console.WriteLine("Disconnected");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Disconnect error: " + ex.Message);
-            }
-        }
-
-        public void Dispose()
-        {
-            if (_disposed) return;
-            _disposed = true;
-            Disconnect();
-            _ssl?.Dispose();
-            _client?.Dispose();
+            case MessageType.DrawStroke:
+            case MessageType.DrawShape:
+                var stroke = message.GetPayload<Stroke>();
+                if (stroke is not null) StrokeReceived?.Invoke(this, stroke);
+                break;
+            case MessageType.ClearCanvasEvent:
+                ClearReceived?.Invoke(this, EventArgs.Empty);
+                break;
+            case MessageType.UndoEvent:
+                var undo = message.GetPayload<UndoPayload>();
+                if (!string.IsNullOrWhiteSpace(undo?.StrokeId)) UndoReceived?.Invoke(this, undo.StrokeId);
+                break;
+            case MessageType.CanvasSync:
+                var sync = message.GetPayload<CanvasSyncPayload>();
+                CanvasSyncReceived?.Invoke(this, sync?.Strokes ?? new List<Stroke>());
+                break;
+            case MessageType.ChatMessage:
+            case MessageType.ChatFileMessage:
+                var chat = message.GetPayload<ChatMessage>(); if (chat is not null) ChatMessageReceived?.Invoke(this, chat);
+                break;
         }
     }
 
+    private sealed class UndoPayload { public string StrokeId { get; set; } = string.Empty; }
+    private sealed class CanvasSyncPayload { public List<Stroke> Strokes { get; set; } = new(); }
 }
