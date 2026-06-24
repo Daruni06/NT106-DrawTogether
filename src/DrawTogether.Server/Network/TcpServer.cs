@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using DrawTogether.Shared.Messages;
 using DrawTogether.Shared.Models;
+using System.IO;
 using System.Net.Security;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
@@ -11,7 +12,7 @@ namespace DrawTogether.Server.Network;
 
 public sealed class TcpServer
 {
-    private X509Certificate2 _certificate;
+    private X509Certificate2? _certificate;
     private readonly ConcurrentDictionary<ClientHandler, byte> _clients = new();
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<ClientHandler, byte>> _roomClients = new();
     private readonly ConcurrentDictionary<string, List<Stroke>> _roomHistory = new();
@@ -29,9 +30,21 @@ public sealed class TcpServer
     public void Start(int port)
     {
         _listener = new TcpListener(IPAddress.Any, port);
-        _certificate = new X509Certificate2(
-            "Certificates/drawtogether.pfx",
-            "123456");
+        var candidates = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "Certificates", "drawtogether.pfx"),
+            Path.Combine(AppContext.BaseDirectory, "..", "Certificates", "drawtogether.pfx"),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "Certificates", "drawtogether.pfx"),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Certificates", "drawtogether.pfx")
+        };
+
+        string? certPath = candidates.FirstOrDefault(File.Exists);
+        if (certPath is null)
+        {
+            throw new FileNotFoundException($"Certificate file 'drawtogether.pfx' not found. Checked: {string.Join(';', candidates)}");
+        }
+
+        _certificate = new X509Certificate2(certPath, "123456");
 
         _listener.Start();
         _running = true;
@@ -105,6 +118,8 @@ public sealed class TcpServer
 
     internal void AddStroke(Stroke stroke)
     {
+        if (string.IsNullOrWhiteSpace(stroke?.RoomId)) return;
+
         var roomId = stroke.RoomId.Trim().ToUpperInvariant();
 
         var list = _roomHistory.GetOrAdd(roomId, _ => new List<Stroke>());
@@ -125,6 +140,20 @@ public sealed class TcpServer
         }
     }
 
+    internal void RemoveStrokeFromHistory(string roomId, string strokeId)
+    {
+        if (string.IsNullOrWhiteSpace(roomId) || string.IsNullOrWhiteSpace(strokeId)) return;
+        roomId = roomId.Trim().ToUpperInvariant();
+
+        if (!_roomHistory.TryGetValue(roomId, out var list)) return;
+
+        lock (list)
+        {
+            var idx = list.FindIndex(s => s.StrokeId == strokeId);
+            if (idx >= 0) list.RemoveAt(idx);
+        }
+    }
+
     private void AcceptLoop()
     {
         while (_running)
@@ -138,7 +167,7 @@ public sealed class TcpServer
 
                 // 2. Thực hiện xác thực TLS với chứng chỉ pfx
                 ssl.AuthenticateAsServer(
-                    _certificate,
+                    _certificate!,
                     false,
                     SslProtocols.Tls12,
                     false);
