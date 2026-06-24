@@ -1,66 +1,82 @@
-using DrawTogether.Shared.Messages;
-using NetworkMessage = DrawTogether.Shared.Messages.Message;
+using System;
+using System.IO;
+using System.Text;
+using System.Threading;
 
-namespace DrawTogether.Client.Network;
-
-public sealed class ReceiveThread
+namespace DrawTogether.Client.Network
 {
+public class ReceiveThread
+{
+public Action<string> OnMessageReceived;
+
+
     private readonly Stream _stream;
-    private readonly CancellationTokenSource _cts = new();
-    private Thread? _thread;
+
+    private Thread _thread;
+
+    private bool _running;
 
     public ReceiveThread(Stream stream)
     {
         _stream = stream;
     }
 
-    public event EventHandler<NetworkMessage>? MessageReceived;
-
-    public event EventHandler<Exception>? ReceiveFailed;
-
     public void Start()
     {
-        _thread = new Thread(ReceiveLoop)
-        {
-            IsBackground = true,
-            Name = "DrawTogether.ReceiveThread"
-        };
+        _running = true;
+
+        _thread = new Thread(ReceiveLoop);
+
+        _thread.IsBackground = true;
 
         _thread.Start();
     }
 
     public void Stop()
     {
-        _cts.Cancel();
+        _running = false;
     }
 
     private void ReceiveLoop()
     {
-        while (!_cts.IsCancellationRequested)
+        byte[] buffer = new byte[4096];
+
+        while (_running)
         {
             try
             {
-                var message = MessageSerializer
-                    .ReadAsync(_stream, _cts.Token)
-                    .GetAwaiter()
-                    .GetResult();
+                int bytesRead =
+                    _stream.Read(
+                        buffer,
+                        0,
+                        buffer.Length);
 
-                MessageReceived?.Invoke(this, message);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (EndOfStreamException ex)
-            {
-                ReceiveFailed?.Invoke(this, ex);
-                break;
+                if (bytesRead == 0)
+                {
+                    Console.WriteLine(
+                        "Disconnected from server");
+
+                    break;
+                }
+
+                string message =
+                    Encoding.UTF8.GetString(
+                        buffer,
+                        0,
+                        bytesRead);
+
+                OnMessageReceived?.Invoke(message);
             }
             catch (Exception ex)
             {
-                ReceiveFailed?.Invoke(this, ex);
+                Console.WriteLine(
+                    "Receive error: "
+                    + ex.Message);
+
                 break;
             }
         }
     }
+}
+
 }

@@ -1,198 +1,138 @@
+using System;
+using System.IO;
+using System.Net.Security;
 using System.Net.Sockets;
-using DrawTogether.Shared.Messages;
-using DrawTogether.Shared.Models;
+using System.Text;
+using System.Threading;
 
 namespace DrawTogether.Server.Network;
 
-public sealed class ClientHandler
+public class ClientHandler
 {
-    private readonly TcpClient _client;
-    private readonly NetworkStream _stream;
-    private readonly TcpServer _server;
-    private Thread? _thread;
-    private bool _running;
+private readonly TcpClient _client;
 
-    public ClientHandler(TcpClient client, TcpServer server)
+
+private readonly TcpServer _server;
+
+private readonly Stream _stream;
+
+private Thread? _thread;
+
+private bool _running;
+
+public ClientHandler(
+    TcpClient client,
+    SslStream ssl,
+    TcpServer server)
+{
+    _client = client;
+    _stream = ssl;
+    _server = server;
+}
+
+public void Start()
+{
+    _running = true;
+
+    _thread = new Thread(ProcessClient)
     {
-        _client = client;
-        _stream = client.GetStream();
-        _server = server;
-    }
+        IsBackground = true
+    };
 
-    public string? CurrentRoomId { get; set; }
+    _thread.Start();
+}
 
-    public void Start()
+public void Stop()
+{
+    _running = false;
+
+    try
     {
-        _running = true;
-        _thread = new Thread(ProcessClient)
-        {
-            IsBackground = true,
-            Name = "DrawTogether.ClientHandler"
-        };
-        _thread.Start();
-    }
-
-    public void Stop()
-    {
-        _running = false;
         _stream.Close();
+    }
+    catch
+    {
+    }
+
+    try
+    {
         _client.Close();
     }
-
-    public void Send(Message message)
+    catch
     {
-        try
-        {
-            MessageSerializer.WriteAsync(_stream, message).GetAwaiter().GetResult();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Send error: {ex.Message}");
-            Stop();
-        }
     }
+}
 
-    private void ProcessClient()
+private void ProcessClient()
+{
+    byte[] buffer = new byte[4096];
+
+    while (_running)
     {
         try
         {
-            while (_running)
+            int bytesRead =
+                _stream.Read(
+                    buffer,
+                    0,
+                    buffer.Length);
+
+            if (bytesRead == 0)
             {
-                var message = MessageSerializer
-                    .ReadAsync(_stream)
-                    .GetAwaiter()
-                    .GetResult();
+                Console.WriteLine(
+                    "Client disconnected");
 
-                HandleMessage(message);
+                break;
             }
-        }
-        catch (EndOfStreamException)
-        {
-            Console.WriteLine("Client disconnected.");
-        }
-        catch (IOException)
-        {
-            Console.WriteLine("Client connection closed.");
+
+            string message =
+                Encoding.UTF8.GetString(
+                    buffer,
+                    0,
+                    bytesRead);
+
+            Console.WriteLine(
+                "Received: " + message);
+
+            Send(
+                "Server received: " + message);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"ClientHandler error: {ex.Message}");
-        }
-        finally
-        {
-            _server.Unregister(this);
-            Stop();
-        }
-    }
+            Console.WriteLine(
+                "ClientHandler error: " +
+                ex.Message);
 
-    private void HandleMessage(Message message)
-    {
-        switch (message.Type)
-        {
-            case MessageType.JoinRoomRequest:
-                HandleJoinRoom(message);
-                break;
-            case MessageType.DrawStroke:
-            case MessageType.DrawShape:
-                HandleDraw(message);
-                break;
-            case MessageType.ClearCanvasRequest:
-                HandleClear(message);
-                break;
-            case MessageType.UndoRequest:
-                HandleUndo(message);
-                break;
-            case MessageType.ChatSend:
-            case MessageType.ChatFileSend:
-                HandleChat(message);
-                break;
-            default:
-                Send(Message.CreateError(message, MessageErrorCode.UnknownMessageType, "Unsupported realtime message."));
-                break;
+            break;
         }
     }
 
-    private void HandleJoinRoom(Message message)
+    _server.Unregister(this);
+
+    Stop();
+}
+
+public void Send(string message)
+{
+    try
     {
-        var roomId = message.RoomId ?? message.GetPayload<RoomPayload>()?.RoomId;
-        _server.JoinRoom(this, roomId);
-    }
+        byte[] data =
+            Encoding.UTF8.GetBytes(message);
 
-    private void HandleDraw(Message message)
+        _stream.Write(
+            data,
+            0,
+            data.Length);
+
+        _stream.Flush();
+    }
+    catch (Exception ex)
     {
-        var stroke = message.GetPayload<Stroke>();
-        if (stroke is null || string.IsNullOrWhiteSpace(stroke.RoomId))
-        {
-            Send(Message.CreateError(message, MessageErrorCode.InvalidPayload, "Invalid stroke payload."));
-            return;
-        }
-
-        _server.JoinRoom(this, stroke.RoomId);
-        _server.AddStrokeToHistory(stroke);
-
-        var broadcastType = message.Type == MessageType.DrawShape ? MessageType.DrawShape : MessageType.DrawStroke;
-        _server.BroadcastToRoom(
-            Message.Create(broadcastType, stroke, roomId: stroke.RoomId, senderId: stroke.UserId),
-            except: this);
+        Console.WriteLine(
+            "Send error: " +
+            ex.Message);
     }
+}
 
-    private void HandleClear(Message message)
-    {
-        var roomId = message.RoomId ?? message.GetPayload<RoomPayload>()?.RoomId ?? CurrentRoomId;
-        if (string.IsNullOrWhiteSpace(roomId))
-        {
-            Send(Message.CreateError(message, MessageErrorCode.InvalidPayload, "Room id is required."));
-            return;
-        }
 
-        _server.ClearHistory(roomId);
-        _server.BroadcastToRoom(
-            Message.Create(MessageType.ClearCanvasEvent, new { roomId }, roomId: roomId, senderId: message.SenderId),
-            except: this);
-    }
-
-    private void HandleUndo(Message message)
-    {
-        var payload = message.GetPayload<UndoPayload>();
-        var roomId = message.RoomId ?? payload?.RoomId ?? CurrentRoomId;
-        var strokeId = payload?.StrokeId;
-
-        if (string.IsNullOrWhiteSpace(roomId) || string.IsNullOrWhiteSpace(strokeId))
-        {
-            Send(Message.CreateError(message, MessageErrorCode.InvalidPayload, "Room id and stroke id are required."));
-            return;
-        }
-
-        _server.RemoveStrokeFromHistory(roomId, strokeId);
-        _server.BroadcastToRoom(
-            Message.Create(MessageType.UndoEvent, new { roomId, strokeId }, roomId: roomId, senderId: message.SenderId),
-            except: this);
-    }
-
-    private void HandleChat(Message message)
-    {
-        var chatMessage = message.GetPayload<ChatMessage>();
-        if (chatMessage is null || string.IsNullOrWhiteSpace(chatMessage.RoomId))
-        {
-            Send(Message.CreateError(message, MessageErrorCode.InvalidPayload, "Invalid chat payload."));
-            return;
-        }
-
-        _server.JoinRoom(this, chatMessage.RoomId);
-        var type = chatMessage.Attachment is null ? MessageType.ChatMessage : MessageType.ChatFileMessage;
-        _server.BroadcastToRoom(
-            Message.Create(type, chatMessage, roomId: chatMessage.RoomId, senderId: chatMessage.SenderId),
-            except: this);
-    }
-
-    private sealed class RoomPayload
-    {
-        public string RoomId { get; set; } = string.Empty;
-    }
-
-    private sealed class UndoPayload
-    {
-        public string? RoomId { get; set; }
-        public string StrokeId { get; set; } = string.Empty;
-    }
 }

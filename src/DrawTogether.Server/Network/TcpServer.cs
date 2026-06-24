@@ -3,11 +3,15 @@ using System.Net;
 using System.Net.Sockets;
 using DrawTogether.Shared.Messages;
 using DrawTogether.Shared.Models;
+using System.Net.Security;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 
 namespace DrawTogether.Server.Network;
 
 public sealed class TcpServer
 {
+    private X509Certificate2 _certificate;
     private readonly ConcurrentDictionary<ClientHandler, byte> _clients = new();
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<ClientHandler, byte>> _roomClients = new();
     private readonly ConcurrentDictionary<string, List<Stroke>> _roomHistory = new();
@@ -21,6 +25,10 @@ public sealed class TcpServer
     public void Start(int port)
     {
         _listener = new TcpListener(IPAddress.Any, port);
+        _certificate = new X509Certificate2(
+            "Certificates/drawtogether.pfx",
+            "123456");
+
         _listener.Start();
         _running = true;
 
@@ -171,9 +179,28 @@ public sealed class TcpServer
         {
             try
             {
-                var tcpClient = _listener!.AcceptTcpClient();
-                var handler = new ClientHandler(tcpClient, this);
+              var tcpClient =
+                    _listener!.AcceptTcpClient();
+
+                SslStream ssl =
+                    new SslStream(
+                        tcpClient.GetStream(),
+                        false);
+
+                ssl.AuthenticateAsServer(
+                    _certificate,
+                    false,
+                    SslProtocols.Tls12,
+                    false);
+
+                var handler =
+                    new ClientHandler(
+                        tcpClient,
+                        ssl,
+                        this);
+
                 Register(handler);
+
                 handler.Start();
             }
             catch (SocketException) when (!_running)
