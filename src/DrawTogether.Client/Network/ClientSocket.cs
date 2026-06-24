@@ -3,17 +3,28 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Text;
+using System.Threading.Tasks;
+using DrawTogether.Shared.Messages;
+using DrawTogether.Client.Forms;
 
 namespace DrawTogether.Client.Network
 {
-public class ClientSocket
+public class ClientSocket : IDisposable
 {
 private TcpClient _client;
-
 
     private SslStream _ssl;
 
     private ReceiveThread _receiver;
+
+    private DrawingForm? _drawingForm;
+
+    private bool _disposed;
+
+    public void AttachDrawingForm(DrawingForm form)
+    {
+        _drawingForm = form;
+    }
 
     public bool Connect(string ip, int port)
     {
@@ -52,9 +63,33 @@ private TcpClient _client;
         }
     }
 
-    private void HandleMessage(string message)
+    public async Task JoinRoomAsync(string roomId, string userId)
     {
-        Console.WriteLine("Server: " + message);
+        var message = Message.Create(
+            MessageType.JoinRoomRequest,
+            new { roomId, userId },
+            roomId: roomId,
+            senderId: userId);
+
+        SendMessage(MessageSerializer.Serialize(message));
+
+        await Task.CompletedTask;
+    }
+
+    private void HandleMessage(string raw)
+    {
+        Console.WriteLine("Server: " + raw);
+
+        try
+        {
+            var message = MessageSerializer.Deserialize(raw);
+            // Forward to drawing form if attached
+            // (extend here as needed)
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleMessage error: " + ex.Message);
+        }
     }
 
     public void SendMessage(string message)
@@ -95,6 +130,15 @@ private TcpClient _client;
         {
             Console.WriteLine("Disconnect error: " + ex.Message);
         }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        Disconnect();
+        _ssl?.Dispose();
+        _client?.Dispose();
     }
 }
 
