@@ -11,6 +11,7 @@ public sealed class CanvasState : IDisposable
 {
     private readonly object _sync = new();
     private readonly List<Stroke> _strokes = new();
+    private readonly List<Stroke> _redo = new();
     private Image? _backgroundImage;
 
     public event EventHandler? Changed;
@@ -34,6 +35,7 @@ public sealed class CanvasState : IDisposable
         {
             _strokes.Clear();
             _strokes.AddRange(strokes.Select(stroke => stroke.Clone()));
+            _redo.Clear();
         }
 
         OnChanged();
@@ -49,6 +51,8 @@ public sealed class CanvasState : IDisposable
         lock (_sync)
         {
             _strokes.Add(stroke.Clone());
+            // new action clears redo stack
+            _redo.Clear();
         }
 
         OnChanged();
@@ -64,8 +68,30 @@ public sealed class CanvasState : IDisposable
                 {
                     var removed = _strokes[index];
                     _strokes.RemoveAt(index);
+                    // push into redo stack
+                    _redo.Add(removed.Clone());
                     OnChanged();
                     return removed;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    public Stroke? RedoLast(string? userId = null)
+    {
+        lock (_sync)
+        {
+            for (var index = _redo.Count - 1; index >= 0; index--)
+            {
+                if (userId is null || _redo[index].UserId == userId)
+                {
+                    var restored = _redo[index];
+                    _redo.RemoveAt(index);
+                    _strokes.Add(restored.Clone());
+                    OnChanged();
+                    return restored;
                 }
             }
         }
@@ -78,6 +104,7 @@ public sealed class CanvasState : IDisposable
         lock (_sync)
         {
             _strokes.Clear();
+            _redo.Clear();
         }
 
         OnChanged();

@@ -40,9 +40,9 @@ namespace DrawTogether.Client.Forms
             _canvasPanel.Cursor = Cursors.Cross;
             _canvasPanel.DoubleBuffered(true);
 
-            // Add canvas under top toolbar (designer-created `guna2Panel1` should be above index 0)
+            // Add canvas and ensure it's behind the toolbar (toolbar must remain interactive)
             Controls.Add(_canvasPanel);
-            Controls.SetChildIndex(_canvasPanel, 0);
+            _canvasPanel.SendToBack();
 
             // Configure chat panel as an overlay anchored to the right. Do NOT dock it
             // so it doesn't reserve layout space when hidden.
@@ -151,6 +151,18 @@ namespace DrawTogether.Client.Forms
 
         private void WireEventsToDesignerControls()
         {
+            // Ensure chat flow stacks messages vertically and scrolls
+            try
+            {
+                flowChatMsg.FlowDirection = FlowDirection.TopDown;
+                flowChatMsg.WrapContents = false;
+                flowChatMsg.AutoScroll = true;
+            }
+            catch
+            {
+                // ignore if control missing or designer set differently
+            }
+
             // Canvas rendering and mouse
             _canvasState.Changed += (_, _) => _canvasPanel.Invalidate();
 
@@ -192,18 +204,18 @@ namespace DrawTogether.Client.Forms
 
             // Toolbar actions
             btnUndo.Click += (_, _) => UndoLocalStroke();
-            btnRedo.Click += (_, _) => { /* redo not implemented yet */ };
+            btnRedo.Click += (_, _) => RedoLocalStroke();
             btnClear.Click += (_, _) => { ClearCanvas(); };
             btnImport.Click += (_, _) => ImportCanvasImage();
             btnExport.Click += (_, _) => ExportCanvasImage();
 
             // Tools (tile buttons) - set drawing tool when clicked
             btnPen.Click += (_, _) => _drawingTool.SetTool(DrawingToolType.Pen);
-            btnBrush.Click += (_, _) => _drawingTool.SetTool(DrawingToolType.Pen);
+            //btnBrush.Click += (_, _) => _drawingTool.SetTool(DrawingToolType.Pen);
             btnEraser.Click += (_, _) => _drawingTool.SetTool(DrawingToolType.Eraser);
-            btnFill.Click += (_, _) => _drawingTool.SetTool(DrawingToolType.Rectangle); // keep mapping, adjust as needed
+            //btnFill.Click += (_, _) => _drawingTool.SetTool(DrawingToolType.Rectangle); // keep mapping, adjust as needed
             btnLine.Click += (_, _) => _drawingTool.SetTool(DrawingToolType.Line);
-            btnCurve.Click += (_, _) => _drawingTool.SetTool(DrawingToolType.Pen);
+            //btnCurve.Click += (_, _) => _drawingTool.SetTool(DrawingToolType.Pen);
             btnEllipse.Click += (_, _) => _drawingTool.SetTool(DrawingToolType.Ellipse);
             btnRectangle.Click += (_, _) => _drawingTool.SetTool(DrawingToolType.Rectangle);
 
@@ -281,6 +293,17 @@ namespace DrawTogether.Client.Forms
             if (removed is not null)
             {
                 UndoRequested?.Invoke(this, new StrokeUndoEventArgs(removed.StrokeId));
+            }
+        }
+
+        private void RedoLocalStroke()
+        {
+            var restored = _canvasState.RedoLast(UserId);
+
+            if (restored is not null)
+            {
+                // Notify listeners as if a stroke was completed locally
+                StrokeCompleted?.Invoke(this, new StrokeCompletedEventArgs(restored.Clone()));
             }
         }
 
@@ -363,17 +386,105 @@ namespace DrawTogether.Client.Forms
             if (!_renderedChatMessageIds.Add(message.MessageId)) return;
 
             var isMine = !string.IsNullOrWhiteSpace(UserId) && message.SenderId == UserId;
+            // Container panel for message
+            var bubble = new Panel { AutoSize = true, BackColor = isMine ? Color.FromArgb(46, 204, 113) : Color.FromArgb(230, 230, 230), Padding = new Padding(8), Margin = new Padding(6) };
+            var availableWidth = Math.Max(200, flowChatMsg.ClientSize.Width - 24);
+            bubble.MaximumSize = new Size(availableWidth, 0);
 
-            var bubble = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
-            var label = new Label { Text = $"{message.SenderName}: {message.Content}", AutoSize = true, MaximumSize = new Size(flowChatMsg.Width - 24, 0) };
-            bubble.Controls.Add(label);
+            // Use inner vertical flow panel to avoid absolute positioning collisions
+            var contentFlow = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                AutoSize = true,
+                MaximumSize = new Size(bubble.MaximumSize.Width - 16, 0),
+                Margin = new Padding(0)
+            };
 
+            // Header with sender name and time
+            var header = new Label
+            {
+                Text = $"{message.SenderName} • {message.SentAt.ToLocalTime():HH:mm}",
+                AutoSize = true,
+                Font = new Font(Font.FontFamily, 9f, FontStyle.Bold),
+                Margin = new Padding(0, 0, 0, 4)
+            };
+            header.ForeColor = isMine ? Color.White : Color.Black;
+            contentFlow.Controls.Add(header);
+
+            // Content text
+            if (!string.IsNullOrWhiteSpace(message.Content))
+            {
+                var contentLabel = new Label
+                {
+                    Text = message.Content.Trim(),
+                    AutoSize = true,
+                    MaximumSize = new Size(contentFlow.MaximumSize.Width, 0),
+                    Font = new Font(Font.FontFamily, 10f, FontStyle.Regular),
+                    Margin = new Padding(0, 2, 0, 4)
+                };
+                contentLabel.ForeColor = isMine ? Color.White : Color.Black;
+                contentFlow.Controls.Add(contentLabel);
+            }
+
+            // Attachment handling
             if (message.Attachment is not null)
             {
-                var attLabel = new LinkLabel { Text = $"Attachment: {message.Attachment.FileName} ({FormatBytes(message.Attachment.Size)})", AutoSize = true };
-                attLabel.Tag = message.Attachment;
-                attLabel.LinkClicked += (_, _) => DownloadAttachment(message.Attachment);
-                bubble.Controls.Add(attLabel);
+                try
+                {
+                    var bytes = message.Attachment.GetBytes();
+                    if (message.Attachment.IsImage)
+                    {
+                        using var ms = new MemoryStream(bytes);
+                        var img = Image.FromStream(ms);
+                        var thumb = new PictureBox
+                        {
+                            SizeMode = PictureBoxSizeMode.Zoom,
+                            Width = Math.Min(availableWidth - 16, img.Width),
+                            Height = Math.Min(180, img.Height),
+                            Margin = new Padding(0, 6, 0, 6),
+                            BorderStyle = BorderStyle.FixedSingle
+                        };
+                        thumb.Image = new Bitmap(img);
+                        contentFlow.Controls.Add(thumb);
+
+                        // Download button
+                        var btn = new Button
+                        {
+                            Text = "Download",
+                            AutoSize = true,
+                            Margin = new Padding(0, 4, 0, 0),
+                            BackColor = Color.FromArgb(40, 116, 240),
+                            ForeColor = Color.White,
+                            FlatStyle = FlatStyle.Standard
+                        };
+                        btn.Click += (_, _) => DownloadAttachment(message.Attachment);
+                        contentFlow.Controls.Add(btn);
+                    }
+                    else
+                    {
+                        var attPanel = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Margin = new Padding(0, 6, 0, 0) };
+                        var attLabel = new Label { Text = $"{message.Attachment.FileName} ({FormatBytes(message.Attachment.Size)})", AutoSize = true };
+                        var btn = new Button { Text = "Download", AutoSize = true, Margin = new Padding(8, 0, 0, 0), BackColor = Color.FromArgb(40, 116, 240), ForeColor = Color.White, FlatStyle = FlatStyle.Standard };
+                        btn.Click += (_, _) => DownloadAttachment(message.Attachment);
+                        attPanel.Controls.Add(attLabel);
+                        attPanel.Controls.Add(btn);
+                        contentFlow.Controls.Add(attPanel);
+                    }
+                }
+                catch
+                {
+                    var errLabel = new Label { Text = $"Attachment: {message.Attachment.FileName}", AutoSize = true };
+                    contentFlow.Controls.Add(errLabel);
+                }
+            }
+
+            bubble.Controls.Add(contentFlow);
+
+            // Adjust colors for header/content when own message is highlighted
+            if (isMine)
+            {
+                bubble.BorderStyle = BorderStyle.None;
             }
 
             flowChatMsg.Controls.Add(bubble);
