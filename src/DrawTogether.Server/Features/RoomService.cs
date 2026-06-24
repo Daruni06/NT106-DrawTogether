@@ -74,7 +74,10 @@ public sealed class RoomService
 
         var updatedRoom = await _rooms.GetByIdAsync(roomId, cancellationToken) ?? room;
         var members = await _rooms.ListActiveMembersAsync(roomId, cancellationToken);
-        var canvasHistory = await _drawHistory.GetByRoomIdAsync(roomId, cancellationToken: cancellationToken);
+        var canvasHistory = await _drawHistory.GetByRoomIdAsync(
+    roomId,
+    afterId: 0,
+    cancellationToken: cancellationToken);
 
         return ServiceResult<RoomDetailsResponse>.Ok(new RoomDetailsResponse
         {
@@ -111,9 +114,9 @@ public sealed class RoomService
     }
 
     public async Task<ServiceResult<EmptyResult>> CloseRoomAsync(
-        AuthenticatedUser currentUser,
-        string roomId,
-        CancellationToken cancellationToken = default)
+    AuthenticatedUser currentUser,
+    string roomId,
+    CancellationToken cancellationToken = default)
     {
         var room = await _rooms.GetByIdAsync(roomId, cancellationToken);
         if (room is null)
@@ -126,7 +129,37 @@ public sealed class RoomService
             return ServiceResult<EmptyResult>.Fail("Only room owner can close this room.");
         }
 
+        // phòng trong database
         await _rooms.CloseRoomAsync(roomId, cancellationToken);
-        return ServiceResult<EmptyResult>.Ok(EmptyResult.Value, "Room closed.");
+
+        // Dọn dẹp toàn bộ nét vẽ của phòng này trong DB MySQL
+        await _drawHistory.ClearRoomHistoryAsync(roomId, cancellationToken);
+
+        return ServiceResult<EmptyResult>.Ok(EmptyResult.Value, "Room closed and history cleared.");
+    }
+    public async Task<ServiceResult<DrawAction>> SaveCanvasActionAsync(
+    AuthenticatedUser currentUser,
+    string roomId,
+    string actionType,
+    string payloadJson,
+    CancellationToken cancellationToken = default)
+    {
+        // Kiểm tra xem phòng có hợp lệ và còn mở không
+        var room = await _rooms.GetByIdAsync(roomId, cancellationToken);
+        if (room is null || room.IsClosed)
+        {
+            return ServiceResult<DrawAction>.Fail("Phòng không tồn tại hoặc đã bị đóng.");
+        }
+
+        // Lưu nét vẽ thông qua DrawHistoryRepository
+        var savedAction = await _drawHistory.SaveAsync(
+            roomId,
+            currentUser.UserId,
+            actionType,
+            payloadJson,
+            cancellationToken
+        );
+
+        return ServiceResult<DrawAction>.Ok(savedAction, "Lưu nét vẽ thành công.");
     }
 }

@@ -2,137 +2,116 @@ using System;
 using System.IO;
 using System.Net.Security;
 using System.Net.Sockets;
-using System.Text;
+using System.Text.Json;
 using System.Threading;
+using DrawTogether.Shared.Messages;
+using DrawTogether.Shared.Models;
 
 namespace DrawTogether.Server.Network;
 
 public class ClientHandler
 {
-private readonly TcpClient _client;
+    private readonly TcpClient _client;
+    private readonly Stream _stream; // Giữ Stream (SslStream) từ thượng nguồn để bảo mật
+    private readonly TcpServer _server;
+    private readonly MessageRouter _router;
 
+    private bool _running;
+    private Thread? _thread;
 
-private readonly TcpServer _server;
+    // Thuộc tính cần thiết để lưu Room ID hiện tại của Client (được gọi từ TcpServer)
+    public string? CurrentRoomId { get; set; }
 
-private readonly Stream _stream;
-
-private Thread? _thread;
-
-private bool _running;
-
-public ClientHandler(
-    TcpClient client,
-    SslStream ssl,
-    TcpServer server)
-{
-    _client = client;
-    _stream = ssl;
-    _server = server;
-}
-
-public void Start()
-{
-    _running = true;
-
-    _thread = new Thread(ProcessClient)
+    public ClientHandler(TcpClient client, Stream sslStream, TcpServer server, MessageRouter router)
     {
-        IsBackground = true
-    };
-
-    _thread.Start();
-}
-
-public void Stop()
-{
-    _running = false;
-
-    try
-    {
-        _stream.Close();
-    }
-    catch
-    {
+        _client = client;
+        _stream = sslStream; // Sử dụng sslStream đã được authenticated
+        _server = server;
+        _router = router;
     }
 
-    try
+    public void Start()
     {
-        _client.Close();
+        _running = true;
+
+        _thread = new Thread(ProcessClient)
+        {
+            IsBackground = true
+        };
+
+        _thread.Start();
     }
-    catch
+
+    public void Stop()
     {
+        _running = false;
+
+        try
+        {
+            _stream.Close();
+        }
+        catch { }
+
+        try
+        {
+            _client.Close();
+        }
+        catch { }
     }
-}
 
-private void ProcessClient()
-{
-    byte[] buffer = new byte[4096];
-
-    while (_running)
+    public void Send(Message message)
     {
         try
         {
-            int bytesRead =
-                _stream.Read(
-                    buffer,
-                    0,
-                    buffer.Length);
+            MessageSerializer.WriteAsync(_stream, message)
+                .GetAwaiter().GetResult();
+        }
+        catch
+        {
+            Stop();
+        }
+    }
 
-            if (bytesRead == 0)
+    private void ProcessClient()
+    {
+        try
+        {
+            while (_running)
             {
-                Console.WriteLine(
-                    "Client disconnected");
+                var message = MessageSerializer
+                    .ReadAsync(_stream)
+                    .GetAwaiter()
+                    .GetResult();
 
-                break;
+                if (message == null) break;
+
+                var request = new NetworkRequest
+                {
+                    Type = message.Type.ToString(),
+                    PayloadJson = JsonSerializer.Serialize(message.Payload),
+                    Token = message.Token
+                };
+
+                var response = _router
+                    .RouteAsync(request)
+                    .GetAwaiter()
+                    .GetResult();
+
+                Send(Message.Create(
+                    message.Type,
+                    response.PayloadJson,
+                    roomId: message.RoomId,
+                    senderId: "server"));
             }
-
-            string message =
-                Encoding.UTF8.GetString(
-                    buffer,
-                    0,
-                    bytesRead);
-
-            Console.WriteLine(
-                "Received: " + message);
-
-            Send(
-                "Server received: " + message);
         }
         catch (Exception ex)
         {
-            Console.WriteLine(
-                "ClientHandler error: " +
-                ex.Message);
-
-            break;
+            Console.WriteLine($"Client error: {ex.Message}");
+        }
+        finally
+        {
+            _server.Unregister(this);
+            Stop();
         }
     }
-
-    _server.Unregister(this);
-
-    Stop();
-}
-
-public void Send(string message)
-{
-    try
-    {
-        byte[] data =
-            Encoding.UTF8.GetBytes(message);
-
-        _stream.Write(
-            data,
-            0,
-            data.Length);
-
-        _stream.Flush();
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine(
-            "Send error: " +
-            ex.Message);
-    }
-}
-
-
 }

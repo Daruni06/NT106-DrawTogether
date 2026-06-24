@@ -51,9 +51,8 @@ public sealed class JwtTokenService
         }
 
         var expectedSignature = Sign(parts[0]);
-        if (!CryptographicOperations.FixedTimeEquals(
-                Encoding.UTF8.GetBytes(parts[1]),
-                Encoding.UTF8.GetBytes(expectedSignature)))
+
+        if (!string.Equals(parts[1], expectedSignature, StringComparison.Ordinal))
         {
             return ServiceResult<AuthenticatedUser>.Fail("Invalid access token.");
         }

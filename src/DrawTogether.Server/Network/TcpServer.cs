@@ -16,11 +16,15 @@ public sealed class TcpServer
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<ClientHandler, byte>> _roomClients = new();
     private readonly ConcurrentDictionary<string, List<Stroke>> _roomHistory = new();
 
+    private readonly MessageRouter _router;
+
     private TcpListener? _listener;
     private bool _running;
-    private Thread? _acceptThread;
 
-    public int ClientCount => _clients.Count;
+    public TcpServer(MessageRouter router)
+    {
+        _router = router;
+    }
 
     public void Start(int port)
     {
@@ -32,14 +36,12 @@ public sealed class TcpServer
         _listener.Start();
         _running = true;
 
-        _acceptThread = new Thread(AcceptLoop)
+        new Thread(AcceptLoop)
         {
-            IsBackground = true,
-            Name = "DrawTogether.AcceptLoop"
-        };
-        _acceptThread.Start();
+            IsBackground = true
+        }.Start();
 
-        Console.WriteLine($"Drawing server started on port {port}.");
+        Console.WriteLine($"Server started on {port}");
     }
 
     public void Stop()
@@ -47,129 +49,79 @@ public sealed class TcpServer
         _running = false;
         _listener?.Stop();
 
-        foreach (var client in _clients.Keys)
-        {
-            client.Stop();
-        }
+        foreach (var c in _clients.Keys)
+            c.Stop();
 
         _clients.Clear();
         _roomClients.Clear();
     }
 
-    internal void Register(ClientHandler client)
-    {
-        _clients.TryAdd(client, 0);
-    }
+    internal void Register(ClientHandler client) => _clients.TryAdd(client, 0);
 
     internal void Unregister(ClientHandler client)
     {
         _clients.TryRemove(client, out _);
 
         foreach (var room in _roomClients.Values)
-        {
             room.TryRemove(client, out _);
-        }
     }
 
-    internal void JoinRoom(ClientHandler client, string? roomId)
+    internal void JoinRoom(ClientHandler client, string roomId)
     {
-        if (string.IsNullOrWhiteSpace(roomId))
+        if (string.IsNullOrWhiteSpace(roomId)) return;
+
+        roomId = roomId.Trim().ToUpperInvariant();
+
+        var room = _roomClients.GetOrAdd(roomId,
+            _ => new ConcurrentDictionary<ClientHandler, byte>());
+
+        room.TryAdd(client, 0);
+        client.CurrentRoomId = roomId;
+
+        if (_roomHistory.TryGetValue(roomId, out var history))
         {
-            return;
+            client.Send(Message.Create(
+                MessageType.CanvasSync,
+                new { strokes = history },
+                roomId: roomId,
+                senderId: "server"));
         }
-
-        var normalizedRoomId = roomId.Trim().ToUpperInvariant();
-        var clients = _roomClients.GetOrAdd(normalizedRoomId, _ => new ConcurrentDictionary<ClientHandler, byte>());
-        var added = clients.TryAdd(client, 0);
-        client.CurrentRoomId = normalizedRoomId;
-
-        if (!added)
-        {
-            // Client already in room; no need to resend full canvas sync.
-            return;
-        }
-
-        var history = _roomHistory.TryGetValue(normalizedRoomId, out var strokes)
-            ? strokes.ToList()
-            : new List<Stroke>();
-
-        client.Send(Message.Create(
-            MessageType.CanvasSync,
-            new { strokes = history },
-            roomId: normalizedRoomId,
-            senderId: "server"));
     }
 
     internal void BroadcastToRoom(Message message, ClientHandler? except = null)
     {
-        var roomId = message.RoomId;
+        if (string.IsNullOrWhiteSpace(message.RoomId)) return;
 
-        if (string.IsNullOrWhiteSpace(roomId))
+        var roomId = message.RoomId.Trim().ToUpperInvariant();
+
+        if (!_roomClients.TryGetValue(roomId, out var clients)) return;
+
+        foreach (var c in clients.Keys)
         {
-            return;
-        }
-
-        if (!_roomClients.TryGetValue(roomId.Trim().ToUpperInvariant(), out var clients))
-        {
-            return;
-        }
-
-        foreach (var client in clients.Keys)
-        {
-            if (ReferenceEquals(client, except))
-            {
-                continue;
-            }
-
-            client.Send(message);
+            if (c == except) continue;
+            c.Send(message);
         }
     }
 
-    internal void AddStrokeToHistory(Stroke stroke)
+    internal void AddStroke(Stroke stroke)
     {
-        if (string.IsNullOrWhiteSpace(stroke.RoomId))
-        {
-            return;
-        }
-
         var roomId = stroke.RoomId.Trim().ToUpperInvariant();
-        var history = _roomHistory.GetOrAdd(roomId, _ => new List<Stroke>());
 
-        lock (history)
+        var list = _roomHistory.GetOrAdd(roomId, _ => new List<Stroke>());
+
+        lock (list)
         {
-            history.Add(stroke.Clone());
+            list.Add(stroke.Clone());
         }
     }
 
-    internal void RemoveStrokeFromHistory(string? roomId, string strokeId)
+    internal void ClearRoom(string roomId)
     {
-        if (string.IsNullOrWhiteSpace(roomId))
-        {
-            return;
-        }
+        roomId = roomId.Trim().ToUpperInvariant();
 
-        if (_roomHistory.TryGetValue(roomId.Trim().ToUpperInvariant(), out var history))
+        if (_roomHistory.TryGetValue(roomId, out var list))
         {
-            lock (history)
-            {
-                history.RemoveAll(stroke => stroke.StrokeId == strokeId);
-            }
-        }
-    }
-
-    internal void ClearHistory(string? roomId)
-    {
-        if (string.IsNullOrWhiteSpace(roomId))
-        {
-            return;
-        }
-
-        if (_roomHistory.TryGetValue(roomId.Trim().ToUpperInvariant(), out var history))
-        {
-            lock (history)
-            {
-                history.Clear();
-            }
+            lock (list) list.Clear();
         }
     }
 
@@ -179,28 +131,22 @@ public sealed class TcpServer
         {
             try
             {
-              var tcpClient =
-                    _listener!.AcceptTcpClient();
+                var tcpClient = _listener!.AcceptTcpClient();
 
-                SslStream ssl =
-                    new SslStream(
-                        tcpClient.GetStream(),
-                        false);
+                // 1. Tạo luồng mã hóa SSL/TLS bảo mật kết nối
+                SslStream ssl = new SslStream(tcpClient.GetStream(), false);
 
+                // 2. Thực hiện xác thực TLS với chứng chỉ pfx
                 ssl.AuthenticateAsServer(
                     _certificate,
                     false,
                     SslProtocols.Tls12,
                     false);
 
-                var handler =
-                    new ClientHandler(
-                        tcpClient,
-                        ssl,
-                        this);
+                // 3. Khởi tạo ClientHandler với cả luồng SSL và Router xử lý logic tin nhắn
+                var handler = new ClientHandler(tcpClient, ssl, this, _router);
 
                 Register(handler);
-
                 handler.Start();
             }
             catch (SocketException) when (!_running)

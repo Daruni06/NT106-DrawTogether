@@ -4,11 +4,9 @@ using DrawTogether.Shared.Messages;
 
 namespace DrawTogether.Server.Network;
 
-// This router is optional but useful for ClientHandler.
-// ClientHandler only needs to parse one JSON request, call RouteAsync, then send one JSON response.
 public sealed class MessageRouter
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
 
     private readonly AuthService _auth;
     private readonly RoomService _rooms;
@@ -23,124 +21,88 @@ public sealed class MessageRouter
         _chat = chat;
     }
 
-    public async Task<NetworkResponse> RouteAsync(
-        NetworkRequest request,
-        CancellationToken cancellationToken = default)
+    public async Task<NetworkResponse> RouteAsync(NetworkRequest request, CancellationToken ct = default)
     {
         try
         {
             return request.Type switch
             {
-                "auth.signup" => await HandleSignupAsync(request, cancellationToken),
-                "auth.signin" => await HandleSigninAsync(request, cancellationToken),
-                "auth.signout" => HandleSignout(),
+                "auth.signup" =>
+                    ToResponse(request.Type,
+                        await _auth.SignupAsync(Deserialize<SignupRequest>(request.PayloadJson), ct)),
 
-                "room.create" => await HandleAuthorizedAsync(request, async user =>
-                    await _rooms.CreateRoomAsync(user, Deserialize<CreateRoomRequest>(request.PayloadJson), cancellationToken)),
+                "auth.signin" =>
+                    ToResponse(request.Type,
+                        await _auth.SigninAsync(Deserialize<SigninRequest>(request.PayloadJson), ct)),
 
-                "room.join" => await HandleAuthorizedAsync(request, async user =>
-                    await _rooms.JoinRoomAsync(user, Deserialize<JoinRoomRequest>(request.PayloadJson), cancellationToken)),
+                "room.create" =>
+                    await Auth(request, async user =>
+                        await _rooms.CreateRoomAsync(user, Deserialize<CreateRoomRequest>(request.PayloadJson), ct)),
 
-                "room.leave" => await HandleAuthorizedAsync(request, async user =>
-                    await _rooms.LeaveRoomAsync(user, Deserialize<LeaveRoomRequest>(request.PayloadJson), cancellationToken)),
+                "room.join" =>
+                    await Auth(request, async user =>
+                        await _rooms.JoinRoomAsync(user, Deserialize<JoinRoomRequest>(request.PayloadJson), ct)),
 
-                "room.list" => await ToNetworkResponseAsync(request.Type, await _rooms.ListOpenRoomsAsync(cancellationToken)),
+                "draw.history" =>
+                    await Auth(request, async user =>
+                    {
+                        var p = Deserialize<DrawHistoryRequest>(request.PayloadJson);
+                        return await _draw.GetCanvasHistoryAsync(user, p.RoomId, p.AfterId, ct);
+                    }),
 
-                "draw.save" => await HandleAuthorizedAsync(request, async user =>
-                    await _draw.SaveDrawActionAsync(user, Deserialize<SaveDrawActionRequest>(request.PayloadJson), cancellationToken)),
+                "draw.save" =>
+                    await Auth(request, async user =>
+                        await _draw.SaveDrawActionAsync(user,
+                            Deserialize<SaveDrawActionRequest>(request.PayloadJson), ct)),
 
-                "draw.history" => await HandleAuthorizedAsync(request, async user =>
-                {
-                    var payload = Deserialize<DrawHistoryRequest>(request.PayloadJson);
-                    return await _draw.GetCanvasHistoryAsync(user, payload.RoomId, payload.AfterId, cancellationToken);
-                }),
+                "chat.send" =>
+                    await Auth(request, async user =>
+                        await _chat.SendMessageAsync(user,
+                            Deserialize<SendChatMessageRequest>(request.PayloadJson), ct)),
 
-                "chat.send" => await HandleAuthorizedAsync(request, async user =>
-                    await _chat.SendMessageAsync(user, Deserialize<SendChatMessageRequest>(request.PayloadJson), cancellationToken)),
+                "chat.history" =>
+                    await Auth(request, async user =>
+                        await _chat.GetHistoryAsync(user,
+                            Deserialize<SendChatMessageRequest>(request.PayloadJson).RoomId, ct)),
 
-                "chat.history" => await HandleAuthorizedAsync(request, async user =>
-                {
-                    var payload = Deserialize<ChatHistoryRequest>(request.PayloadJson);
-                    return await _chat.GetHistoryAsync(user, payload.RoomId, cancellationToken);
-                }),
-
-                _ => NetworkResponse.Fail(request.Type, "Unknown request type.")
+                _ => NetworkResponse.Fail(request.Type, "Unknown request")
             };
-        }
-        catch (JsonException)
-        {
-            return NetworkResponse.Fail(request.Type, "Invalid JSON payload.");
         }
         catch (Exception ex)
         {
-            // In production, log ex.ToString() on server, but do not leak internal errors to client.
             Console.WriteLine(ex);
-            return NetworkResponse.Fail(request.Type, "Internal server error.");
+            return NetworkResponse.Fail(request.Type, "Server error");
         }
     }
 
-    private async Task<NetworkResponse> HandleSignupAsync(NetworkRequest request, CancellationToken cancellationToken)
-    {
-        var result = await _auth.SignupAsync(Deserialize<SignupRequest>(request.PayloadJson), cancellationToken);
-        return ToNetworkResponse(request.Type, result);
-    }
-
-    private async Task<NetworkResponse> HandleSigninAsync(NetworkRequest request, CancellationToken cancellationToken)
-    {
-        var result = await _auth.SigninAsync(Deserialize<SigninRequest>(request.PayloadJson), cancellationToken);
-        return ToNetworkResponse(request.Type, result);
-    }
-
-    private NetworkResponse HandleSignout()
-    {
-        var result = _auth.Signout();
-        return ToNetworkResponse("auth.signout", result);
-    }
-
-    private async Task<NetworkResponse> HandleAuthorizedAsync<T>(
+    // =========================
+    // AUTH WRAPPER
+    // =========================
+    private async Task<NetworkResponse> Auth<T>(
         NetworkRequest request,
         Func<AuthenticatedUser, Task<ServiceResult<T>>> handler)
     {
-        var authResult = _auth.ValidateAccessToken(request.Token ?? string.Empty);
-        if (!authResult.Success || authResult.Data is null)
-        {
-            return NetworkResponse.Fail(request.Type, authResult.Message);
-        }
+        var auth = _auth.ValidateAccessToken(request.Token ?? "");
 
-        var result = await handler(authResult.Data);
-        return ToNetworkResponse(request.Type, result);
+        if (!auth.Success || auth.Data is null)
+            return NetworkResponse.Fail(request.Type, auth.Message);
+
+        var result = await handler(auth.Data);
+
+        return ToResponse(request.Type, result);
     }
 
-    private static Task<NetworkResponse> ToNetworkResponseAsync<T>(string type, ServiceResult<T> result)
-    {
-        return Task.FromResult(ToNetworkResponse(type, result));
-    }
-
-    private static NetworkResponse ToNetworkResponse<T>(string type, ServiceResult<T> result)
+    // =========================
+    private static NetworkResponse ToResponse<T>(string type, ServiceResult<T> result)
     {
         if (!result.Success)
-        {
             return NetworkResponse.Fail(type, result.Message);
-        }
 
-        var payloadJson = JsonSerializer.Serialize(result.Data, JsonOptions);
-        return NetworkResponse.Ok(type, payloadJson, result.Message);
+        var json = JsonSerializer.Serialize(result.Data, Options);
+        return NetworkResponse.Ok(type, json, result.Message);
     }
 
     private static T Deserialize<T>(string json)
-    {
-        return JsonSerializer.Deserialize<T>(json, JsonOptions)
-            ?? throw new JsonException($"Cannot deserialize {typeof(T).Name}.");
-    }
-}
-
-public sealed class DrawHistoryRequest
-{
-    public string RoomId { get; init; } = string.Empty;
-    public long AfterId { get; init; }
-}
-
-public sealed class ChatHistoryRequest
-{
-    public string RoomId { get; init; } = string.Empty;
+        => JsonSerializer.Deserialize<T>(json, Options)
+           ?? throw new JsonException("Invalid payload");
 }
